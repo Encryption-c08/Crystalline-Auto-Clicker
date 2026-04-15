@@ -1,0 +1,55 @@
+< Bug >
+
+< Functionality >
+
+< Too lazy >
+
+< New Shit >
+• Click Limit
+    Stops the auto clicker after a set number of clicks have been performed.
+• Time Limit
+    Automatically stops the auto clicker after the selected amount of time.
+• Position (Saved Point)
+    Moves the cursor to a saved location before each click when enabled.
+• Click Duration
+    How long each click holds the mouse button down before releasing.
+• Speed Variation
+    Randomly adjusts click timing within a set range to make clicking less consistent.
+• Double Click
+    Performs two clicks per cycle with a short delay between them.
+• Double Click Delay
+    The time between the two clicks in a double-click cycle.
+• Edge / Corner Margin (px)
+    Defines how close the cursor must get to the screen edge or corner before stopping.
+• Corner Stop
+    Automatically stops the clicker if the cursor moves into a screen corner (failsafe).
+• Edge Stop
+    Stops the clicker if the cursor reaches the edge of the screen (failsafe).
+• Themes
+    Possibly custom css or preset themes the user can change to do things such as light mode or having a red interface
+• Close to tray
+    A setting to close the app to the tray rather than fully closing it (on window minimize)
+• Key auto clicker
+    Ability to select key(s) to automatically click
+• Process whitelist/blacklist
+    blacklist or whitelist a process to prevent or exclusively have the auto clicker interact with said process
+• Global deactivation hotkey
+    A hotkey to deactivate things or just clicking
+• Profiles
+    Ability to create profiles e.g. used if the user wants to switch games without needing to re-config everything
+• Sound feedback
+    Option to enable sound feedback with a customizable sound
+• Overlay
+    Always on top overlay so the user can see what is active with the key-bind for said feature as well as displaying metrics like CPS
+• Click position record/playback
+    Allows the user to record multiple mouse positions then play them back, clicking at every location recorded
+• Jitter
+    An adjustable randomizer that changes the position of the mouse between every click (x/y axis)
+• Always on top
+    Window will stay on top of every other process including full screen applications
+• Auto Loading Profiles when a process is detected
+    Lets the user auto load a profile if a chosen process is detected
+• Clicking in specific regions
+    Overlay bounding box to only allow automatic clicking within said region
+• Color detection
+    Select a color on screen which will have the auto clicker automatically click on said color if it gets detected (includes a color region since most games don't use the same solid color)
