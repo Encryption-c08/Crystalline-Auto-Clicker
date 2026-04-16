@@ -1,7 +1,8 @@
 {
-  "name": "src-tauri",
+  "name": "crystalline-auto-clicker",
   "private": true,
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "auto clicker",
   "type": "module",
   "scripts": {
     "dev": "vite",
