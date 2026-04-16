@@ -5,15 +5,16 @@ import { CheckIcon, ChevronDownIcon } from "lucide-react"
 
 import {
   clickRateUnitLabels,
-  clickRateUnits,
+  timeLimitUnits,
   type AutoClickerSettings,
   type ClickRateUnit,
 } from "@/config/settings"
+import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency"
 import {
   finalizeTimeLimit,
   normalizeTimeLimitInput,
 } from "@/config/runtime"
-import { PanelFrame } from "@/components/panel-frame"
+import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay"
 import { Input } from "@tauri-ui/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
 import { cn } from "@tauri-ui/lib/utils"
@@ -36,15 +37,22 @@ function DescriptionTooltip({ children }: { children: ReactNode }) {
 }
 
 type TimeLimitPanelProps = {
+  onUnavailablePress?: (target: DisabledDependencyTarget) => void
   settings: AutoClickerSettings
   setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
 }
 
 export function TimeLimitPanel({
+  onUnavailablePress,
   settings,
   setSettings,
 }: TimeLimitPanelProps) {
-  const { timeLimit, timeLimitEnabled, timeLimitUnit } = settings
+  const { clickMode, timeLimit, timeLimitEnabled, timeLimitUnit } = settings
+  const isTimeLimitAvailable = clickMode === "toggle"
+  const isTimeLimitActive = isTimeLimitAvailable && timeLimitEnabled
+  const unavailableReason = !isTimeLimitAvailable
+    ? "Disabled due to Activation: Hold"
+    : null
   const [isTimeLimitUnitOpen, setIsTimeLimitUnitOpen] = useState(false)
   const timeLimitUnitRef = useRef<HTMLDivElement | null>(null)
 
@@ -77,11 +85,17 @@ export function TimeLimitPanel({
     }
   }, [isTimeLimitUnitOpen])
 
+  useEffect(() => {
+    if (!isTimeLimitAvailable) {
+      setIsTimeLimitUnitOpen(false)
+    }
+  }, [isTimeLimitAvailable])
+
   const inputGroup = (
     <div
       className={cn(
         "flex h-8 min-w-0 items-stretch overflow-visible rounded-lg border transition-colors",
-        timeLimitEnabled
+        isTimeLimitActive
           ? "border-border/70 bg-background/65"
           : "border-border/60 bg-background/30 opacity-70"
       )}
@@ -89,7 +103,7 @@ export function TimeLimitPanel({
       <Input
         aria-label="Time limit value"
         className="h-full w-20 rounded-none border-0 bg-transparent px-3 text-center text-base font-semibold shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-base"
-        disabled={!timeLimitEnabled}
+        disabled={!isTimeLimitActive}
         inputMode="numeric"
         onBlur={() =>
           setSettings((current) => ({
@@ -113,14 +127,14 @@ export function TimeLimitPanel({
           aria-haspopup="listbox"
           className={cn(
             "flex h-full min-w-[7.5rem] items-center justify-between gap-2 border-l border-border/70 px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-0",
-            timeLimitEnabled
+            isTimeLimitActive
               ? cn(
                   "text-muted-foreground hover:bg-background/55",
                   isTimeLimitUnitOpen && "rounded-tr-lg bg-background/80"
                 )
               : "cursor-not-allowed text-muted-foreground/80"
           )}
-          disabled={!timeLimitEnabled}
+          disabled={!isTimeLimitActive}
           onClick={() => setIsTimeLimitUnitOpen((current) => !current)}
           type="button"
         >
@@ -139,7 +153,7 @@ export function TimeLimitPanel({
             role="listbox"
           >
             <div className="p-1">
-              {clickRateUnits.map((value) => {
+              {timeLimitUnits.map((value) => {
                 const isSelected = value === timeLimitUnit
 
                 return (
@@ -181,8 +195,8 @@ export function TimeLimitPanel({
   const rowContent = (
     <div
       className={cn(
-        "flex min-w-0 items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-colors",
-        timeLimitEnabled
+        "flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-colors",
+        isTimeLimitActive
           ? "border-border/70 bg-card/35"
           : "border-border/60 bg-background/20 hover:bg-background/28"
       )}
@@ -191,17 +205,17 @@ export function TimeLimitPanel({
         <p className="text-base font-semibold text-foreground">Time Limit</p>
       </div>
 
-      <div className="flex min-w-0 items-center gap-2">
-        {timeLimitEnabled ? (
+      <div className="relative ml-auto grid w-full max-w-[18.75rem] min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+        {isTimeLimitActive ? (
           <DescriptionTooltip>{inputGroup}</DescriptionTooltip>
         ) : (
           inputGroup
         )}
 
         <ToggleGroup
-          className="rounded-lg border border-border bg-background/60 p-0.5"
+          className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
           onValueChange={(value) => {
-            if (!value) {
+            if (!value || !isTimeLimitAvailable) {
               return
             }
 
@@ -215,35 +229,44 @@ export function TimeLimitPanel({
           }}
           size="sm"
           type="single"
-          value={timeLimitEnabled ? "on" : "off"}
+          value={isTimeLimitActive ? "on" : "off"}
           variant="default"
         >
           <ToggleGroupItem
             aria-label="Turn time limit off"
-            className="h-7 rounded-md px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
+            className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
+            disabled={!isTimeLimitAvailable}
             value="off"
           >
             Off
           </ToggleGroupItem>
           <ToggleGroupItem
             aria-label="Turn time limit on"
-            className="h-7 rounded-md px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
+            className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
+            disabled={!isTimeLimitAvailable}
             value="on"
           >
             On
           </ToggleGroupItem>
         </ToggleGroup>
+
+        {unavailableReason ? (
+          <DisabledReasonOverlay
+            onClick={() => onUnavailablePress?.("click-mode-hold")}
+            reason={unavailableReason}
+          />
+        ) : null}
       </div>
     </div>
   )
 
   return (
-    <PanelFrame className="w-fit max-w-full justify-self-start rounded-md p-1.5">
-      {timeLimitEnabled ? (
+    <>
+      {isTimeLimitActive || unavailableReason ? (
         rowContent
       ) : (
         <DescriptionTooltip>{rowContent}</DescriptionTooltip>
       )}
-    </PanelFrame>
+    </>
   )
 }

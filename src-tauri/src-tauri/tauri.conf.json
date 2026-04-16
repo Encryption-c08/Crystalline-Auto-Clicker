@@ -19,7 +19,8 @@
         "height": 680,
         "decorations": false,
         "center": true,
-        "visible": false
+        "visible": false,
+        "backgroundColor": "#111111"
       }
     ],
     "security": {

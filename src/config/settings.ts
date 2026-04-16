@@ -1,6 +1,7 @@
 import { normalizeHotkey, UNBOUND_HOTKEY, type Hotkey } from "@/input/hotkeys"
 
-export type ClickRateUnit = "s" | "m" | "h" | "d"
+export type ClickRateMode = "per" | "every"
+export type ClickRateUnit = "ms" | "s" | "m" | "h" | "d"
 export type ClickMode = "toggle" | "hold"
 export type MouseButtonOption = "left" | "middle" | "right" | "mouse4" | "mouse5"
 export type MouseActionOption = "click" | "hold"
@@ -9,10 +10,14 @@ export type ClickEngine = "classic" | "throughput"
 export type AutoClickerSettings = {
   clickMode: ClickMode
   clickRate: string
+  clickRateMode: ClickRateMode
   clickRateUnit: ClickRateUnit
   hotkey: Hotkey
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  clickDurationEnabled: boolean
+  clickDurationMin: string
+  clickDurationMax: string
   clickLimitEnabled: boolean
   clickLimit: string
   timeLimitEnabled: boolean
@@ -29,10 +34,15 @@ export type SavedHotkey = {
 export type SavedAutoClickerSettings = {
   clickMode?: string | null
   clickRate?: string | null
+  clickRateMode?: string | null
   clickRateUnit?: string | null
   hotkey?: SavedHotkey | null
   mouseButton?: string | null
   mouseAction?: string | null
+  clickDurationEnabled?: boolean | null
+  clickDurationMin?: string | null
+  clickDurationMax?: string | null
+  clickDuration?: string | null
   clickLimitEnabled?: boolean | null
   clickLimit?: string | null
   timeLimitEnabled?: boolean | null
@@ -40,7 +50,10 @@ export type SavedAutoClickerSettings = {
   timeLimitUnit?: string | null
 }
 
-export const clickRateUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
+export const clickRateModes: ClickRateMode[] = ["per", "every"]
+export const clickRateEveryUnits: ClickRateUnit[] = ["ms", "s", "m", "h", "d"]
+export const clickRatePerUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
+export const timeLimitUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
 export const clickModes: ClickMode[] = ["toggle", "hold"]
 export const mouseButtons: MouseButtonOption[] = [
   "left",
@@ -50,7 +63,12 @@ export const mouseButtons: MouseButtonOption[] = [
   "mouse5",
 ]
 export const mouseActions: MouseActionOption[] = ["click", "hold"]
+export const clickRateModeLabels: Record<ClickRateMode, string> = {
+  per: "Per",
+  every: "Every",
+}
 export const clickRateUnitLabels: Record<ClickRateUnit, string> = {
+  ms: "Milliseconds",
   s: "Seconds",
   m: "Minutes",
   h: "Hours",
@@ -71,10 +89,14 @@ export const mouseActionLabels: Record<MouseActionOption, string> = {
 export const defaultAutoClickerSettings: AutoClickerSettings = {
   clickMode: "hold",
   clickRate: "25",
+  clickRateMode: "per",
   clickRateUnit: "s",
   hotkey: { ...UNBOUND_HOTKEY },
   mouseButton: "left",
   mouseAction: "click",
+  clickDurationEnabled: false,
+  clickDurationMin: "1",
+  clickDurationMax: "1",
   clickLimitEnabled: false,
   clickLimit: "100",
   timeLimitEnabled: false,
@@ -102,10 +124,34 @@ function normalizeHotkeySource(value: string | null | undefined): Hotkey["source
   return "keyboard"
 }
 
+export function getClickRateUnitsForMode(mode: ClickRateMode) {
+  return mode === "every" ? clickRateEveryUnits : clickRatePerUnits
+}
+
 export function normalizeAutoClickerSettings(
   settings: SavedAutoClickerSettings | null | undefined
 ): AutoClickerSettings {
   const hotkey = settings?.hotkey
+  const clickRateMode = resolveOption(
+    settings?.clickRateMode,
+    clickRateModes,
+    defaultAutoClickerSettings.clickRateMode
+  )
+  const hasLegacyClickDuration =
+    typeof settings?.clickDuration === "string" && settings.clickDuration !== ""
+  const resolvedLegacyClickDuration = hasLegacyClickDuration
+    ? settings?.clickDuration
+    : undefined
+  const resolvedClickDurationMin =
+    typeof settings?.clickDurationMin === "string"
+      ? settings.clickDurationMin
+      : resolvedLegacyClickDuration ?? defaultAutoClickerSettings.clickDurationMin
+  const resolvedClickDurationMax =
+    typeof settings?.clickDurationMax === "string"
+      ? settings.clickDurationMax
+      : typeof settings?.clickDurationMin === "string"
+        ? settings.clickDurationMin
+        : resolvedLegacyClickDuration ?? defaultAutoClickerSettings.clickDurationMax
 
   return {
     clickMode: resolveOption(
@@ -117,9 +163,10 @@ export function normalizeAutoClickerSettings(
       typeof settings?.clickRate === "string"
         ? settings.clickRate
         : defaultAutoClickerSettings.clickRate,
+    clickRateMode,
     clickRateUnit: resolveOption(
       settings?.clickRateUnit,
-      clickRateUnits,
+      getClickRateUnitsForMode(clickRateMode),
       defaultAutoClickerSettings.clickRateUnit
     ),
     hotkey: normalizeHotkey(
@@ -144,6 +191,16 @@ export function normalizeAutoClickerSettings(
       mouseActions,
       defaultAutoClickerSettings.mouseAction
     ),
+    clickDurationEnabled:
+      typeof settings?.clickDurationEnabled === "boolean"
+        ? settings.clickDurationEnabled
+        : typeof settings?.clickDurationMin === "string" ||
+            typeof settings?.clickDurationMax === "string" ||
+            hasLegacyClickDuration
+          ? true
+          : defaultAutoClickerSettings.clickDurationEnabled,
+    clickDurationMin: resolvedClickDurationMin,
+    clickDurationMax: resolvedClickDurationMax,
     clickLimitEnabled:
       typeof settings?.clickLimitEnabled === "boolean"
         ? settings.clickLimitEnabled
@@ -162,7 +219,7 @@ export function normalizeAutoClickerSettings(
         : defaultAutoClickerSettings.timeLimit,
     timeLimitUnit: resolveOption(
       settings?.timeLimitUnit,
-      clickRateUnits,
+      timeLimitUnits,
       defaultAutoClickerSettings.timeLimitUnit
     ),
   }

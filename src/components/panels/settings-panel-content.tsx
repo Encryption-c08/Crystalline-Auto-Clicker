@@ -5,18 +5,25 @@ import { CheckIcon, ChevronDownIcon } from "lucide-react"
 
 import {
   clickModes,
+  clickRateModeLabels,
+  clickRateModes,
   mouseActionLabels,
   mouseActions,
   clickRateUnitLabels,
-  clickRateUnits,
+  getClickRateUnitsForMode,
   mouseButtonLabels,
   mouseButtons,
   type AutoClickerSettings,
   type ClickMode,
-  type ClickRateUnit,
+  type ClickRateMode,
   type MouseActionOption,
   type MouseButtonOption,
 } from "@/config/settings"
+import type {
+  DisabledDependencyCue,
+  DisabledDependencyTarget,
+} from "@/components/disabled-feature-dependency"
+import type { SettingsPanelLayout } from "@/components/settings-panel"
 import { finalizeClickRate, normalizeClickRateInput } from "@/config/runtime"
 import {
   formatKeyboardHotkey,
@@ -40,12 +47,16 @@ function TinyLabel({ children }: { children: string }) {
 }
 
 type SettingsPanelContentProps = {
+  disabledDependencyCue: DisabledDependencyCue | null
+  layout?: SettingsPanelLayout
   settings: AutoClickerSettings
   setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
   runtimeError: string | null
 }
 
 export function SettingsPanelContent({
+  disabledDependencyCue,
+  layout = "default",
   settings,
   setSettings,
   runtimeError,
@@ -58,9 +69,74 @@ export function SettingsPanelContent({
 
   const [isCapturingHotkey, setIsCapturingHotkey] = useState(false)
   const [isRateUnitDropdownOpen, setIsRateUnitDropdownOpen] = useState(false)
+  const [activeDependencyHighlight, setActiveDependencyHighlight] = useState<{
+    flashOn: boolean
+    target: DisabledDependencyTarget
+  } | null>(null)
 
-  const { clickMode, clickRate, clickRateUnit, hotkey, mouseAction, mouseButton } =
-    settings
+  const {
+    clickMode,
+    clickRate,
+    clickRateMode,
+    clickRateUnit,
+    hotkey,
+    mouseAction,
+    mouseButton,
+  } = settings
+  const isCompact = layout === "compact"
+  const rateUnits = getClickRateUnitsForMode(clickRateMode)
+  const clickRatePhrase =
+    clickRateMode === "every" ? "Every" : "Clicks per"
+  const isActionHoldHighlighted =
+    activeDependencyHighlight?.target === "mouse-action-hold" &&
+    activeDependencyHighlight.flashOn
+  const isClickModeHoldHighlighted =
+    activeDependencyHighlight?.target === "click-mode-hold" &&
+    activeDependencyHighlight.flashOn
+
+  function cycleMouseButton() {
+    setSettings((current) => {
+      const currentIndex = mouseButtons.indexOf(current.mouseButton)
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % mouseButtons.length : 0
+
+      return {
+        ...current,
+        mouseButton: mouseButtons[nextIndex],
+      }
+    })
+  }
+
+  function cycleClickRateUnit() {
+    setIsRateUnitDropdownOpen(false)
+    setSettings((current) => {
+      const nextRateUnits = getClickRateUnitsForMode(current.clickRateMode)
+      const currentIndex = nextRateUnits.indexOf(current.clickRateUnit)
+      const nextIndex =
+        currentIndex >= 0 ? (currentIndex + 1) % nextRateUnits.length : 0
+
+      return {
+        ...current,
+        clickRateUnit: nextRateUnits[nextIndex] ?? "s",
+      }
+    })
+  }
+
+  function setClickRateMode(nextMode: ClickRateMode) {
+    setSettings((current) => {
+      const nextUnits = getClickRateUnitsForMode(nextMode)
+      const nextDefaultUnit = nextUnits[0] ?? "s"
+
+      return {
+        ...current,
+        clickRateMode: nextMode,
+        clickRateUnit: isCompact
+          ? nextDefaultUnit
+          : nextUnits.includes(current.clickRateUnit)
+            ? current.clickRateUnit
+            : nextDefaultUnit,
+      }
+    })
+  }
 
   useEffect(() => {
     if (!isCapturingHotkey) {
@@ -227,6 +303,46 @@ export function SettingsPanelContent({
   }, [isCapturingHotkey, setSettings])
 
   useEffect(() => {
+    if (!disabledDependencyCue) {
+      return undefined
+    }
+
+    let flashOn = true
+    let completedFlashes = 0
+
+    setActiveDependencyHighlight({
+      flashOn: true,
+      target: disabledDependencyCue.target,
+    })
+
+    const intervalId = window.setInterval(() => {
+      completedFlashes += 1
+
+      if (completedFlashes >= 12) {
+        window.clearInterval(intervalId)
+        setActiveDependencyHighlight(null)
+        return
+      }
+
+      flashOn = !flashOn
+      setActiveDependencyHighlight({
+        flashOn,
+        target: disabledDependencyCue.target,
+      })
+    }, 260)
+
+    const timeoutId = window.setTimeout(() => {
+      window.clearInterval(intervalId)
+      setActiveDependencyHighlight(null)
+    }, 3_200)
+
+    return () => {
+      window.clearInterval(intervalId)
+      window.clearTimeout(timeoutId)
+    }
+  }, [disabledDependencyCue])
+
+  useEffect(() => {
     if (!isRateUnitDropdownOpen) {
       return undefined
     }
@@ -254,6 +370,193 @@ export function SettingsPanelContent({
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [isRateUnitDropdownOpen])
+
+  if (isCompact) {
+    return (
+      <div className="grid w-max content-start gap-2 px-2.5 py-2">
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            <TinyLabel>Rate</TinyLabel>
+            <Label className="sr-only" htmlFor={rateId}>
+              Click rate
+            </Label>
+            <Input
+              className="h-8 w-18 bg-background/70 px-2 text-center text-base font-semibold"
+              id={rateId}
+              inputMode="numeric"
+              onBlur={() =>
+                setSettings((current) => ({
+                  ...current,
+                  clickRate: finalizeClickRate(current.clickRate),
+                }))
+              }
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  clickRate: normalizeClickRateInput(event.target.value),
+                }))
+              }
+              type="text"
+              value={clickRate}
+            />
+            <ToggleGroup
+              className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+              onValueChange={(value) => {
+                if (value) {
+                  setClickRateMode(value as ClickRateMode)
+                }
+              }}
+              size="sm"
+              type="single"
+              value={clickRateMode}
+              variant="default"
+            >
+              {clickRateModes.map((value) => (
+                <ToggleGroupItem
+                  aria-label={`Set click rate mode to ${clickRateModeLabels[value]}`}
+                  className="px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+                  key={value}
+                  value={value}
+                >
+                  {clickRateModeLabels[value]}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <Label className="sr-only" htmlFor={rateUnitId}>
+              Click rate unit
+            </Label>
+            <Button
+              aria-label="Cycle click rate unit"
+              className="h-8 w-[8.5rem] justify-center rounded-lg bg-background/70 px-3 text-sm font-medium focus-visible:ring-0"
+              id={rateUnitId}
+              onClick={cycleClickRateUnit}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {clickRateUnitLabels[clickRateUnit]}
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <TinyLabel>Hotkey</TinyLabel>
+            <Button
+              className="h-8 w-[9rem] justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0"
+              data-hotkey-trigger
+              id={hotkeyId}
+              onClick={() => {
+                if (ignoreNextHotkeyTriggerClickRef.current) {
+                  ignoreNextHotkeyTriggerClickRef.current = false
+                  return
+                }
+
+                setIsCapturingHotkey(true)
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {isCapturingHotkey || hotkey.code === ""
+                ? "Press any key"
+                : hotkey.label}
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            <TinyLabel>Action</TinyLabel>
+            <ToggleGroup
+              className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+              onValueChange={(value) => {
+                if (value) {
+                  setSettings((current) => ({
+                    ...current,
+                    mouseAction: value as MouseActionOption,
+                  }))
+                }
+              }}
+              size="sm"
+              type="single"
+              value={mouseAction}
+              variant="default"
+            >
+              {mouseActions.map((value) => (
+                <ToggleGroupItem
+                  aria-label={`Set mouse action to ${mouseActionLabels[value]}`}
+                  className={cn(
+                    "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
+                    value === "hold" &&
+                      isActionHoldHighlighted &&
+                      "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                  )}
+                  key={value}
+                  value={value}
+                >
+                  {mouseActionLabels[value]}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <TinyLabel>Button</TinyLabel>
+            <Button
+              aria-label="Cycle mouse button"
+              className="h-8 min-w-[6.75rem] justify-center rounded-lg bg-background/70 px-3 text-sm font-medium focus-visible:ring-0"
+              onClick={cycleMouseButton}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {mouseButtonLabels[mouseButton]}
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <TinyLabel>Activate</TinyLabel>
+            <ToggleGroup
+              className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+              onValueChange={(value) => {
+                if (value) {
+                  setSettings((current) => ({
+                    ...current,
+                    clickMode: value as ClickMode,
+                  }))
+                }
+              }}
+              size="sm"
+              type="single"
+              value={clickMode}
+              variant="default"
+            >
+              {clickModes.map((value) => (
+                <ToggleGroupItem
+                  aria-label={`Set click mode to ${value}`}
+                  className={cn(
+                    "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
+                    value === "hold" &&
+                      isClickModeHoldHighlighted &&
+                      "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                  )}
+                  key={value}
+                  value={value}
+                >
+                  {value === "toggle" ? "Toggle" : "Hold"}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        </div>
+
+        {runtimeError ? (
+          <div className="text-[11px] font-medium text-destructive">
+            {runtimeError}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div className="grid h-full content-center gap-1.5 px-3 py-2">
@@ -285,7 +588,7 @@ export function SettingsPanelContent({
             value={clickRate}
           />
           <div className="text-sm font-medium whitespace-nowrap text-muted-foreground">
-            clicks per
+            {clickRatePhrase}
           </div>
           <Label className="sr-only" htmlFor={rateUnitId}>
             Click rate unit
@@ -320,7 +623,7 @@ export function SettingsPanelContent({
                 role="listbox"
               >
                 <div className="p-1">
-                  {clickRateUnits.map((value) => {
+                  {rateUnits.map((value) => {
                     const isSelected = value === clickRateUnit
 
                     return (
@@ -335,7 +638,7 @@ export function SettingsPanelContent({
                         onClick={() => {
                           setSettings((current) => ({
                             ...current,
-                            clickRateUnit: value as ClickRateUnit,
+                            clickRateUnit: value,
                           }))
                           setIsRateUnitDropdownOpen(false)
                         }}
@@ -356,16 +659,39 @@ export function SettingsPanelContent({
               </div>
             ) : null}
           </div>
+          <ToggleGroup
+            className="shrink-0 overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+            onValueChange={(value) => {
+              if (value) {
+                setClickRateMode(value as ClickRateMode)
+              }
+            }}
+            size="sm"
+            type="single"
+            value={clickRateMode}
+            variant="default"
+          >
+            {clickRateModes.map((value) => (
+              <ToggleGroupItem
+                aria-label={`Set click rate mode to ${clickRateModeLabels[value]}`}
+                className="px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+                key={value}
+                value={value}
+              >
+                {clickRateModeLabels[value]}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
       </div>
 
       <div className="flex items-center gap-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <div className="w-14 shrink-0">
             <TinyLabel>Hotkey</TinyLabel>
           </div>
           <Button
-            className="h-8 min-w-0 flex-1 justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0"
+            className="h-8 w-[14rem] max-w-full justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0"
             data-hotkey-trigger
             id={hotkeyId}
             onClick={() => {
@@ -380,14 +706,16 @@ export function SettingsPanelContent({
             type="button"
             variant="outline"
           >
-            {isCapturingHotkey ? "Press any key" : hotkey.label}
+            {isCapturingHotkey || hotkey.code === ""
+              ? "Press any key"
+              : hotkey.label}
           </Button>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
           <TinyLabel>Activate</TinyLabel>
           <ToggleGroup
-            className="rounded-lg border border-border bg-background/60 p-0.5"
+            className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
             onValueChange={(value) => {
               if (value) {
                 setSettings((current) => ({
@@ -404,7 +732,12 @@ export function SettingsPanelContent({
             {clickModes.map((value) => (
               <ToggleGroupItem
                 aria-label={`Set click mode to ${value}`}
-                className="rounded-md px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+                className={cn(
+                  "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
+                  value === "hold" &&
+                    isClickModeHoldHighlighted &&
+                    "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                )}
                 key={value}
                 value={value}
               >
@@ -419,7 +752,7 @@ export function SettingsPanelContent({
         <div className="flex shrink-0 items-center gap-2">
           <TinyLabel>Action</TinyLabel>
           <ToggleGroup
-            className="rounded-lg border border-border bg-background/60 p-0.5"
+            className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
             onValueChange={(value) => {
               if (value) {
                 setSettings((current) => ({
@@ -436,7 +769,12 @@ export function SettingsPanelContent({
             {mouseActions.map((value) => (
               <ToggleGroupItem
                 aria-label={`Set mouse action to ${mouseActionLabels[value]}`}
-                className="rounded-md px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+                className={cn(
+                  "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
+                  value === "hold" &&
+                    isActionHoldHighlighted &&
+                    "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                )}
                 key={value}
                 value={value}
               >
@@ -446,10 +784,10 @@ export function SettingsPanelContent({
           </ToggleGroup>
         </div>
 
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <TinyLabel>Button</TinyLabel>
           <ToggleGroup
-            className="flex-wrap rounded-lg border border-border bg-background/60 p-0.5"
+            className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
             onValueChange={(value) => {
               if (value) {
                 setSettings((current) => ({
@@ -466,7 +804,7 @@ export function SettingsPanelContent({
             {mouseButtons.map((value) => (
               <ToggleGroupItem
                 aria-label={`Set mouse button to ${mouseButtonLabels[value]}`}
-                className="rounded-md px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+                className="px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
                 key={value}
                 value={value}
               >

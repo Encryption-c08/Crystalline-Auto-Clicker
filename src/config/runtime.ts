@@ -2,6 +2,7 @@ import type {
   AutoClickerSettings,
   ClickEngine,
   ClickMode,
+  ClickRateMode,
   ClickRateUnit,
   MouseActionOption,
   MouseButtonOption,
@@ -9,6 +10,7 @@ import type {
 import { formatHotkeyLabel, normalizeHotkeyCode } from "@/input/hotkeys"
 
 const clickRateUnitWindows: Record<ClickRateUnit, number> = {
+  ms: 1,
   s: 1_000,
   m: 60_000,
   h: 3_600_000,
@@ -17,6 +19,7 @@ const clickRateUnitWindows: Record<ClickRateUnit, number> = {
 
 export const MIN_CLICK_RATE = 1
 export const MAX_CLICK_RATE = 5_000
+export const MIN_CLICK_DURATION = 1
 export const MIN_CLICK_LIMIT = 1
 export const MAX_CLICK_LIMIT = 1_000_000
 export const MIN_TIME_LIMIT = 1
@@ -25,12 +28,16 @@ export const MAX_TIME_LIMIT = 1_000_000
 export type AutoClickerCommandConfig = {
   clickMode: ClickMode
   clickRate: string
+  clickRateMode: ClickRateMode
   clickRateUnit: ClickRateUnit
   hotkeyCode: string
   hotkeyLabel: string
   intervalMs: number
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  clickDurationEnabled: boolean
+  clickDurationMin: string
+  clickDurationMax: string
   clickLimitEnabled: boolean
   clickLimit: string
   timeLimitEnabled: boolean
@@ -66,6 +73,45 @@ export function normalizeClickRateInput(value: string) {
 
 export function finalizeClickRate(value: string) {
   return normalizeClickRateInput(value) || String(MIN_CLICK_RATE)
+}
+
+export function normalizeClickDurationInput(value: string) {
+  const digitsOnly = value.replace(/[^0-9]/g, "")
+
+  if (digitsOnly === "") {
+    return ""
+  }
+
+  const normalizedValue = digitsOnly.replace(/^0+/, "")
+
+  return normalizedValue === "" ? String(MIN_CLICK_DURATION) : normalizedValue
+}
+
+export function finalizeClickDuration(value: string) {
+  return normalizeClickDurationInput(value) || String(MIN_CLICK_DURATION)
+}
+
+export function finalizeClickDurationRange(
+  minValue: string,
+  maxValue: string
+) {
+  const minDuration = Number.parseInt(finalizeClickDuration(minValue), 10)
+  const maxCandidate = Number.parseInt(
+    finalizeClickDuration(maxValue || minValue),
+    10
+  )
+
+  const normalizedMin = Number.isNaN(minDuration)
+    ? MIN_CLICK_DURATION
+    : Math.max(MIN_CLICK_DURATION, minDuration)
+  const normalizedMaxCandidate = Number.isNaN(maxCandidate)
+    ? normalizedMin
+    : Math.max(MIN_CLICK_DURATION, maxCandidate)
+
+  return {
+    min: String(normalizedMin),
+    max: String(Math.max(normalizedMin, normalizedMaxCandidate)),
+  }
 }
 
 export function normalizeClickLimitInput(value: string) {
@@ -107,19 +153,92 @@ export function finalizeTimeLimit(value: string) {
 }
 
 export function resolveClickIntervalMs(
+  clickRateMode: ClickRateMode,
   clickRate: string,
   clickRateUnit: ClickRateUnit
 ) {
   const normalizedRate = Number.parseInt(finalizeClickRate(clickRate), 10)
-  const totalWindowMs = clickRateUnitWindows[clickRateUnit]
+  const unitWindowMs = clickRateUnitWindows[clickRateUnit]
 
-  return Math.max(1, Math.floor(totalWindowMs / normalizedRate))
+  if (clickRateMode === "every") {
+    return Math.max(1, unitWindowMs * normalizedRate)
+  }
+
+  return Math.max(1, Math.floor(unitWindowMs / normalizedRate))
+}
+
+export function resolveBaseClicksPerSecond(
+  clickRateMode: ClickRateMode,
+  clickRate: string,
+  clickRateUnit: ClickRateUnit
+) {
+  const intervalMs = resolveClickIntervalMs(
+    clickRateMode,
+    clickRate,
+    clickRateUnit
+  )
+
+  return 1_000 / intervalMs
+}
+
+export function estimateAverageClicksPerSecond(settings: AutoClickerSettings) {
+  if (settings.mouseAction !== "click") {
+    return null
+  }
+
+  const baseClicksPerSecond = resolveBaseClicksPerSecond(
+    settings.clickRateMode,
+    settings.clickRate,
+    settings.clickRateUnit
+  )
+
+  if (!settings.clickDurationEnabled) {
+    return baseClicksPerSecond
+  }
+
+  const clickDuration = finalizeClickDurationRange(
+    settings.clickDurationMin,
+    settings.clickDurationMax
+  )
+  const minDuration = Number.parseInt(clickDuration.min, 10)
+  const maxDuration = Number.parseInt(clickDuration.max, 10)
+  const averageDurationMs = (minDuration + maxDuration) / 2
+
+  if (!Number.isFinite(averageDurationMs) || averageDurationMs <= 0) {
+    return baseClicksPerSecond
+  }
+
+  return Math.min(baseClicksPerSecond, 1_000 / averageDurationMs)
+}
+
+export function formatClicksPerSecond(value: number) {
+  if (!Number.isFinite(value)) {
+    return "0"
+  }
+
+  if (value >= 10) {
+    return value.toFixed(1).replace(/\.0$/, "")
+  }
+
+  if (value >= 1) {
+    return value.toFixed(1).replace(/\.0$/, "")
+  }
+
+  if (value >= 0.1) {
+    return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")
+  }
+
+  return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
 }
 
 export function buildAutoClickerConfig(
   settings: AutoClickerSettings
 ): AutoClickerCommandConfig {
   const clickRate = finalizeClickRate(settings.clickRate)
+  const clickDuration = finalizeClickDurationRange(
+    settings.clickDurationMin,
+    settings.clickDurationMax
+  )
   const clickLimit = finalizeClickLimit(settings.clickLimit)
   const timeLimit = finalizeTimeLimit(settings.timeLimit)
   const hotkeyCode = normalizeHotkeyCode(settings.hotkey.code)
@@ -127,12 +246,20 @@ export function buildAutoClickerConfig(
   return {
     clickMode: settings.clickMode,
     clickRate,
+    clickRateMode: settings.clickRateMode,
     clickRateUnit: settings.clickRateUnit,
     hotkeyCode,
     hotkeyLabel: formatHotkeyLabel(hotkeyCode),
-    intervalMs: resolveClickIntervalMs(clickRate, settings.clickRateUnit),
+    intervalMs: resolveClickIntervalMs(
+      settings.clickRateMode,
+      clickRate,
+      settings.clickRateUnit
+    ),
     mouseButton: settings.mouseButton,
     mouseAction: settings.mouseAction,
+    clickDurationEnabled: settings.clickDurationEnabled,
+    clickDurationMin: clickDuration.min,
+    clickDurationMax: clickDuration.max,
     clickLimitEnabled: settings.clickLimitEnabled,
     clickLimit,
     timeLimitEnabled: settings.timeLimitEnabled,

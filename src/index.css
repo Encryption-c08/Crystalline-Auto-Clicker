@@ -181,6 +181,18 @@ body {
   .ui-selectable {
     @apply select-text;
   }
+
+  /* Keep scroll behavior but hide the native scrollbar chrome for app panels. */
+  .ui-scrollbar-hidden {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .ui-scrollbar-hidden::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
 }
 
 [data-tauri-drag-region] {

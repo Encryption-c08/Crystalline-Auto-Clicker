@@ -1,7 +1,7 @@
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{fs, io::ErrorKind, path::PathBuf, thread, time::Duration};
 
 use serde::{Deserialize, Serialize};
-use tauri::{webview::PageLoadEvent, Manager};
+use tauri::{webview::PageLoadEvent, LogicalSize, Manager, Size};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
 
@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    Media::{timeBeginPeriod, timeEndPeriod, TIMERR_NOERROR},
     UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GetWindowLongPtrW, SetWindowLongPtrW, GWLP_WNDPROC,
         SC_KEYMENU, WM_SYSCOMMAND,
@@ -33,6 +34,32 @@ static MAIN_WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
 #[cfg(target_os = "windows")]
 static ORIGINAL_MAIN_WINDOW_PROC: AtomicIsize = AtomicIsize::new(0);
 
+#[cfg(target_os = "windows")]
+struct TimerResolutionGuard {
+    enabled: bool,
+    period_ms: u32,
+}
+
+#[cfg(target_os = "windows")]
+impl TimerResolutionGuard {
+    fn new(period_ms: u32) -> Self {
+        let enabled = unsafe { timeBeginPeriod(period_ms) == TIMERR_NOERROR };
+
+        Self { enabled, period_ms }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for TimerResolutionGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            unsafe {
+                timeEndPeriod(self.period_ms);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedHotkey {
@@ -46,15 +73,29 @@ struct PersistedHotkey {
 struct PersistedAutoClickerSettings {
     click_mode: Option<String>,
     click_rate: Option<String>,
+    click_rate_mode: Option<String>,
     click_rate_unit: Option<String>,
     hotkey: Option<PersistedHotkey>,
     mouse_button: Option<String>,
     mouse_action: Option<String>,
+    click_duration_enabled: Option<bool>,
+    click_duration_min: Option<String>,
+    click_duration_max: Option<String>,
+    click_duration: Option<String>,
     click_limit_enabled: Option<bool>,
     click_limit: Option<String>,
     time_limit_enabled: Option<bool>,
     time_limit: Option<String>,
     time_limit_unit: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowFrameRequest {
+    width: f64,
+    height: f64,
+    min_width: Option<f64>,
+    min_height: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -151,6 +192,94 @@ fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, Strin
 #[tauri::command]
 fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, String> {
     Ok(None)
+}
+
+#[tauri::command]
+fn sync_main_window_frame(
+    app: tauri::AppHandle,
+    frame: WindowFrameRequest,
+) -> Result<(), String> {
+    let WindowFrameRequest {
+        width,
+        height,
+        min_width,
+        min_height,
+    } = frame;
+
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("Window size must be positive.".into());
+    }
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window is not available.".to_string())?;
+
+    let target_size = LogicalSize::new(width, height);
+    let target_min_size = match (min_width, min_height) {
+        (Some(min_width), Some(min_height))
+            if min_width.is_finite()
+                && min_height.is_finite()
+                && min_width > 0.0
+                && min_height > 0.0 =>
+        {
+            Some(LogicalSize::new(min_width, min_height))
+        }
+        _ => None,
+    };
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|error| format!("Unable to read window scale factor: {error}"))?;
+    let start_size = window
+        .inner_size()
+        .map_err(|error| format!("Unable to read window size: {error}"))?
+        .to_logical::<f64>(scale_factor);
+    let needs_animation = (start_size.width - target_size.width).abs() >= 1.0
+        || (start_size.height - target_size.height).abs() >= 1.0;
+    const RESIZE_STEPS: u32 = 10;
+    const RESIZE_FRAME_MS: u64 = 10;
+
+    window
+        .set_min_size(None::<Size>)
+        .map_err(|error| format!("Unable to clear minimum window size: {error}"))?;
+
+    if needs_animation {
+        #[cfg(target_os = "windows")]
+        let _timer_resolution_guard = TimerResolutionGuard::new(1);
+
+        for step in 1..=RESIZE_STEPS {
+            let progress = step as f64 / RESIZE_STEPS as f64;
+            let eased_progress = 1.0 - (1.0 - progress).powi(3);
+            let next_width =
+                (start_size.width + (target_size.width - start_size.width) * eased_progress)
+                    .round()
+                    .max(1.0);
+            let next_height =
+                (start_size.height + (target_size.height - start_size.height) * eased_progress)
+                    .round()
+                    .max(1.0);
+
+            window
+                .set_size(LogicalSize::new(next_width, next_height))
+                .map_err(|error| format!("Unable to animate main window resize: {error}"))?;
+
+            if step < RESIZE_STEPS {
+                thread::sleep(Duration::from_millis(RESIZE_FRAME_MS));
+            }
+        }
+    } else {
+        window
+            .set_size(target_size)
+            .map_err(|error| format!("Unable to resize main window: {error}"))?;
+    }
+
+    window
+        .set_min_size(target_min_size)
+        .map_err(|error| format!("Unable to apply minimum window size: {error}"))?;
+    window
+        .set_size(target_size)
+        .map_err(|error| format!("Unable to finalize main window size: {error}"))?;
+
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -273,7 +402,8 @@ pub fn run() {
             get_auto_clicker_status,
             load_auto_clicker_settings,
             save_auto_clicker_settings,
-            read_pressed_keyboard_hotkey
+            read_pressed_keyboard_hotkey,
+            sync_main_window_frame
         ])
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {

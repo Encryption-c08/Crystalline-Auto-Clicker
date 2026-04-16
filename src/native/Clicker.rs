@@ -34,7 +34,8 @@ pub(crate) use hotkeys::read_pressed_keyboard_hotkey;
 use clicker_calc::{
     click_cadence_from_config, dispatch_mouse_clicks, next_cadence_interval,
     next_throughput_worker_sleep, next_worker_sleep, press_mouse_button,
-    release_mouse_button, wait_until_precise,
+    release_mouse_button, wait_until_precise, ClickDurationRange,
+    ClickDurationRng,
 };
 #[cfg(target_os = "windows")]
 use hotkeys::{
@@ -44,6 +45,9 @@ use hotkeys::{
 const DEFAULT_CLICK_LIMIT: &str = "100";
 const MIN_CLICK_LIMIT: u64 = 1;
 const MAX_CLICK_LIMIT: u64 = 1_000_000;
+const DEFAULT_CLICK_DURATION_MAX: &str = "1";
+const DEFAULT_CLICK_DURATION_MIN: &str = "1";
+const MIN_CLICK_DURATION: u64 = 1;
 const DEFAULT_TIME_LIMIT: &str = "60";
 const MIN_TIME_LIMIT: u64 = 1;
 const MAX_TIME_LIMIT: u64 = 1_000_000;
@@ -64,7 +68,15 @@ pub enum ClickEngine {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum ClickRateMode {
+    Per,
+    Every,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ClickRateUnit {
+    Ms,
     S,
     M,
     H,
@@ -93,12 +105,16 @@ pub enum MouseAction {
 pub struct AutoClickerCommandConfig {
     pub click_mode: ClickMode,
     pub click_rate: String,
+    pub click_rate_mode: ClickRateMode,
     pub click_rate_unit: ClickRateUnit,
     pub hotkey_code: String,
     pub hotkey_label: String,
     pub interval_ms: u64,
     pub mouse_button: MouseButton,
     pub mouse_action: MouseAction,
+    pub click_duration_enabled: bool,
+    pub click_duration_min: String,
+    pub click_duration_max: String,
     pub click_limit_enabled: bool,
     pub click_limit: String,
     pub time_limit_enabled: bool,
@@ -124,12 +140,16 @@ impl Default for AutoClickerCommandConfig {
         Self {
             click_mode: ClickMode::Hold,
             click_rate: "25".into(),
+            click_rate_mode: ClickRateMode::Per,
             click_rate_unit: ClickRateUnit::S,
             hotkey_code: String::new(),
             hotkey_label: "Unbound".into(),
             interval_ms: 40,
             mouse_button: MouseButton::Left,
             mouse_action: MouseAction::Click,
+            click_duration_enabled: false,
+            click_duration_min: DEFAULT_CLICK_DURATION_MIN.into(),
+            click_duration_max: DEFAULT_CLICK_DURATION_MAX.into(),
             click_limit_enabled: false,
             click_limit: DEFAULT_CLICK_LIMIT.into(),
             time_limit_enabled: false,
@@ -292,6 +312,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
         let mut remaining_time_limit: Option<Duration> = None;
         let mut last_time_limit_tick: Option<Instant> = None;
         let mut cadence_carry_nanos = 0_u64;
+        let mut click_duration_rng = ClickDurationRng::new();
         let mut last_schedule_config: Option<AutoClickerCommandConfig> = None;
         let mut next_click_at: Option<Instant> = None;
 
@@ -325,6 +346,12 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 MouseAction::Hold => Ok(None),
             };
             let cadence = cadence_result.as_ref().ok().copied().flatten();
+            let click_duration_range_result = click_duration_range_from_config(&config);
+            let click_duration_range = click_duration_range_result
+                .as_ref()
+                .ok()
+                .copied()
+                .flatten();
             let click_limit_result = click_limit_from_config(&config);
             let click_limit = click_limit_result.as_ref().ok().and_then(|limit| *limit);
             let time_limit_result = time_limit_from_config(&config);
@@ -342,6 +369,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
             if hotkey_result.is_err()
                 || cadence_result.is_err()
+                || click_duration_range_result.is_err()
                 || click_limit_result.is_err()
                 || time_limit_result.is_err()
             {
@@ -495,6 +523,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         let result = dispatch_mouse_clicks(
                                             config.mouse_button,
                                             click_count,
+                                            click_duration_range,
+                                            &mut click_duration_rng,
                                         );
                                         if result.is_ok() {
                                             if let Some(remaining) =
@@ -586,6 +616,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 status.last_error = hotkey_result
                     .err()
                     .or_else(|| cadence_result.err())
+                    .or_else(|| click_duration_range_result.err())
                     .or_else(|| click_limit_result.err())
                     .or_else(|| time_limit_result.err())
                     .or_else(|| app_window_active_result.err())
@@ -668,6 +699,7 @@ fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(),
         click_cadence_from_config(config)?;
     }
 
+    click_duration_range_from_config(config)?;
     click_limit_from_config(config)?;
     time_limit_from_config(config)?;
 
@@ -680,10 +712,85 @@ fn normalize_auto_clicker_config(
 ) -> Result<AutoClickerCommandConfig, String> {
     config.hotkey_code = normalize_hotkey_code(&config.hotkey_code)?;
     config.hotkey_label = format_hotkey_label(&config.hotkey_code)?;
+    if config.click_duration_enabled && matches!(config.mouse_action, MouseAction::Click) {
+        let (normalized_min, normalized_max) = normalize_click_duration_range_values(
+            &config.click_duration_min,
+            &config.click_duration_max,
+        )?;
+        config.click_duration_min = normalized_min;
+        config.click_duration_max = normalized_max;
+    }
     config.click_limit = normalize_click_limit_value(&config.click_limit)?;
     config.time_limit = normalize_time_limit_value(&config.time_limit)?;
     validate_auto_clicker_config(&config)?;
     Ok(config)
+}
+
+#[cfg(target_os = "windows")]
+fn click_duration_range_from_config(
+    config: &AutoClickerCommandConfig,
+) -> Result<Option<ClickDurationRange>, String> {
+    if !config.click_duration_enabled || !matches!(config.mouse_action, MouseAction::Click) {
+        return Ok(None);
+    }
+
+    let (min_duration_ms, max_duration_ms) = parse_click_duration_range_values(
+        &config.click_duration_min,
+        &config.click_duration_max,
+    )?;
+
+    Ok(Some(ClickDurationRange::from_millis(
+        min_duration_ms,
+        max_duration_ms,
+    )))
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_click_duration_range_values(
+    min_value: &str,
+    max_value: &str,
+) -> Result<(String, String), String> {
+    let (min_duration_ms, max_duration_ms) = parse_click_duration_range_values(min_value, max_value)?;
+    Ok((min_duration_ms.to_string(), max_duration_ms.to_string()))
+}
+
+#[cfg(target_os = "windows")]
+fn parse_click_duration_range_values(min_value: &str, max_value: &str) -> Result<(u64, u64), String> {
+    let min_fallback = min_value.trim();
+    let min_duration_ms =
+        parse_click_duration_value(min_value, "Click duration minimum", DEFAULT_CLICK_DURATION_MIN)?;
+    let max_duration_ms = parse_click_duration_value(
+        max_value,
+        "Click duration maximum",
+        if min_fallback.is_empty() {
+            DEFAULT_CLICK_DURATION_MAX
+        } else {
+            min_fallback
+        },
+    )?
+    .max(min_duration_ms);
+
+    Ok((min_duration_ms, max_duration_ms))
+}
+
+#[cfg(target_os = "windows")]
+fn parse_click_duration_value(value: &str, label: &str, fallback: &str) -> Result<u64, String> {
+    let trimmed_value = value.trim();
+    let normalized_value = if trimmed_value.is_empty() {
+        fallback
+    } else {
+        trimmed_value
+    };
+
+    let click_duration = normalized_value
+        .parse::<u64>()
+        .map_err(|_| format!("{label} must be a whole number."))?;
+
+    if click_duration < MIN_CLICK_DURATION {
+        return Err(format!("{label} must be at least {MIN_CLICK_DURATION} ms."));
+    }
+
+    Ok(click_duration)
 }
 
 #[cfg(target_os = "windows")]
@@ -766,6 +873,7 @@ fn parse_time_limit_value(value: &str) -> Result<u64, String> {
 #[cfg(target_os = "windows")]
 fn time_limit_unit_ms(unit: ClickRateUnit) -> u64 {
     match unit {
+        ClickRateUnit::Ms => 1,
         ClickRateUnit::S => 1_000,
         ClickRateUnit::M => 60_000,
         ClickRateUnit::H => 3_600_000,
