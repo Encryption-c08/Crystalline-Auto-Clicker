@@ -6,9 +6,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$frontendDir = Resolve-Path (Join-Path $scriptDir "..")
 $repoRoot = Resolve-Path (Join-Path $scriptDir "..\..")
-$targetDir = Join-Path $repoRoot ".tauri-target"
+$frontendDir = Resolve-Path (Join-Path $scriptDir "..")
+$targetDir = Join-Path $frontendDir ".tauri-target"
 $binDir = Join-Path $repoRoot "bin"
 
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null

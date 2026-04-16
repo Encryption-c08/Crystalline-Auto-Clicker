@@ -10,7 +10,7 @@
     "desktop:exe": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1 -Mode exe",
     "desktop:installer": "powershell -ExecutionPolicy Bypass -File ./scripts/build-desktop.ps1 -Mode installer",
     "lint": "eslint .",
-    "format": "prettier --write \"**/*.{ts,tsx}\"",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,css,html,md}\"",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-with-bin.ps1"

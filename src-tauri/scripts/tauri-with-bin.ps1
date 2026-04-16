@@ -76,10 +76,10 @@ function Copy-BuildArtifactsToBin {
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$frontendDir = Resolve-Path (Join-Path $scriptDir "..")
 $repoRoot = Resolve-Path (Join-Path $scriptDir "..\..")
+$frontendDir = Resolve-Path (Join-Path $scriptDir "..")
 $binDir = Join-Path $repoRoot "bin"
-$defaultTargetDir = Join-Path $repoRoot ".tauri-target"
+$defaultTargetDir = Join-Path $frontendDir ".tauri-target"
 
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 New-Item -ItemType Directory -Force -Path $defaultTargetDir | Out-Null
