@@ -23,6 +23,8 @@ import {
   formatMouseHotkey,
   UNBOUND_HOTKEY,
 } from "@/input/hotkeys"
+import { readPressedKeyboardHotkey } from "@/lib/hotkey-capture"
+import { isTauri } from "@/lib/tauri"
 import { Button } from "@tauri-ui/components/ui/button"
 import { Input } from "@tauri-ui/components/ui/input"
 import { Label } from "@tauri-ui/components/ui/label"
@@ -51,6 +53,7 @@ export function SettingsPanelContent({
   const hotkeyId = useId()
   const rateId = useId()
   const rateUnitId = useId()
+  const ignoreNextHotkeyTriggerClickRef = useRef(false)
   const rateUnitDropdownRef = useRef<HTMLDivElement | null>(null)
 
   const [isCapturingHotkey, setIsCapturingHotkey] = useState(false)
@@ -64,6 +67,8 @@ export function SettingsPanelContent({
       return undefined
     }
 
+    let pendingMouseHotkey: AutoClickerSettings["hotkey"] | null = null
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault()
@@ -73,6 +78,17 @@ export function SettingsPanelContent({
           hotkey: { ...UNBOUND_HOTKEY },
         }))
         setIsCapturingHotkey(false)
+        return
+      }
+
+      if (
+        event.key === "Shift" ||
+        event.key === "Control" ||
+        event.key === "Alt" ||
+        event.key === "Meta"
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
         return
       }
 
@@ -88,13 +104,11 @@ export function SettingsPanelContent({
     }
 
     function handleMouseDown(event: MouseEvent) {
-      const target = event.target
       if (
-        target instanceof Element &&
-        target.closest("[data-hotkey-trigger]") &&
-        event.button === 0
+        event.target instanceof Element &&
+        event.target.closest("[data-hotkey-trigger]")
       ) {
-        return
+        ignoreNextHotkeyTriggerClickRef.current = true
       }
 
       const nextHotkey = formatMouseHotkey(event)
@@ -104,16 +118,111 @@ export function SettingsPanelContent({
 
       event.preventDefault()
       event.stopPropagation()
-      setSettings((current) => ({ ...current, hotkey: nextHotkey }))
+      pendingMouseHotkey = nextHotkey
+    }
+
+    function handleMouseUp(event: MouseEvent) {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-hotkey-trigger]")
+      ) {
+        ignoreNextHotkeyTriggerClickRef.current = true
+      }
+
+      if (!pendingMouseHotkey) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (event.buttons !== 0) {
+        return
+      }
+
+      setSettings((current) => ({ ...current, hotkey: pendingMouseHotkey! }))
       setIsCapturingHotkey(false)
+    }
+
+    function handleContextMenu(event: MouseEvent) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    function handleMouseClick(event: MouseEvent) {
+      event.preventDefault()
+      event.stopPropagation()
     }
 
     window.addEventListener("keydown", handleKeyDown, true)
     window.addEventListener("mousedown", handleMouseDown, true)
+    window.addEventListener("mouseup", handleMouseUp, true)
+    window.addEventListener("click", handleMouseClick, true)
+    window.addEventListener("auxclick", handleMouseClick, true)
+    window.addEventListener("contextmenu", handleContextMenu, true)
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true)
       window.removeEventListener("mousedown", handleMouseDown, true)
+      window.removeEventListener("mouseup", handleMouseUp, true)
+      window.removeEventListener("click", handleMouseClick, true)
+      window.removeEventListener("auxclick", handleMouseClick, true)
+      window.removeEventListener("contextmenu", handleContextMenu, true)
+    }
+  }, [isCapturingHotkey, setSettings])
+
+  useEffect(() => {
+    if (!isCapturingHotkey || !isTauri()) {
+      return undefined
+    }
+
+    let cancelled = false
+    let pendingNativeHotkey: AutoClickerSettings["hotkey"] | null = null
+    let pollInFlight = false
+
+    async function pollPressedKeyboardHotkey() {
+      if (cancelled || pollInFlight) {
+        return
+      }
+
+      pollInFlight = true
+
+      try {
+        const nextHotkey = await readPressedKeyboardHotkey()
+        if (cancelled) {
+          return
+        }
+
+        if (nextHotkey) {
+          pendingNativeHotkey = nextHotkey
+          return
+        }
+
+        if (!pendingNativeHotkey) {
+          return
+        }
+
+        setSettings((current) => ({
+          ...current,
+          hotkey: pendingNativeHotkey!,
+        }))
+        setIsCapturingHotkey(false)
+      } catch (error) {
+        console.error("Unable to read native hotkey state", error)
+      } finally {
+        pollInFlight = false
+      }
+    }
+
+    void pollPressedKeyboardHotkey()
+
+    const intervalId = window.setInterval(() => {
+      void pollPressedKeyboardHotkey()
+    }, 16)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
     }
   }, [isCapturingHotkey, setSettings])
 
@@ -259,7 +368,14 @@ export function SettingsPanelContent({
             className="h-8 min-w-0 flex-1 justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0"
             data-hotkey-trigger
             id={hotkeyId}
-            onClick={() => setIsCapturingHotkey(true)}
+            onClick={() => {
+              if (ignoreNextHotkeyTriggerClickRef.current) {
+                ignoreNextHotkeyTriggerClickRef.current = false
+                return
+              }
+
+              setIsCapturingHotkey(true)
+            }}
             size="sm"
             type="button"
             variant="outline"

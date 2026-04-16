@@ -17,6 +17,8 @@ const clickRateUnitWindows: Record<ClickRateUnit, number> = {
 
 export const MIN_CLICK_RATE = 1
 export const MAX_CLICK_RATE = 5_000
+export const MIN_CLICK_LIMIT = 1
+export const MAX_CLICK_LIMIT = 1_000_000
 
 export type AutoClickerCommandConfig = {
   clickMode: ClickMode
@@ -27,6 +29,8 @@ export type AutoClickerCommandConfig = {
   intervalMs: number
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  clickLimitEnabled: boolean
+  clickLimit: string
   clickEngine: ClickEngine
 }
 
@@ -59,6 +63,25 @@ export function finalizeClickRate(value: string) {
   return normalizeClickRateInput(value) || String(MIN_CLICK_RATE)
 }
 
+export function normalizeClickLimitInput(value: string) {
+  const digitsOnly = value.replace(/[^0-9]/g, "")
+
+  if (digitsOnly === "") {
+    return ""
+  }
+
+  const nextValue = Number.parseInt(digitsOnly, 10)
+  if (Number.isNaN(nextValue)) {
+    return String(MIN_CLICK_LIMIT)
+  }
+
+  return String(Math.min(MAX_CLICK_LIMIT, Math.max(MIN_CLICK_LIMIT, nextValue)))
+}
+
+export function finalizeClickLimit(value: string) {
+  return normalizeClickLimitInput(value) || "100"
+}
+
 export function resolveClickIntervalMs(
   clickRate: string,
   clickRateUnit: ClickRateUnit
@@ -73,6 +96,7 @@ export function buildAutoClickerConfig(
   settings: AutoClickerSettings
 ): AutoClickerCommandConfig {
   const clickRate = finalizeClickRate(settings.clickRate)
+  const clickLimit = finalizeClickLimit(settings.clickLimit)
   const hotkeyCode = normalizeHotkeyCode(settings.hotkey.code)
 
   return {
@@ -84,6 +108,8 @@ export function buildAutoClickerConfig(
     intervalMs: resolveClickIntervalMs(clickRate, settings.clickRateUnit),
     mouseButton: settings.mouseButton,
     mouseAction: settings.mouseAction,
+    clickLimitEnabled: settings.clickLimitEnabled,
+    clickLimit,
     clickEngine: "throughput",
   }
 }

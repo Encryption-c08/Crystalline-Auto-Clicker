@@ -1,4 +1,4 @@
-import { UNBOUND_HOTKEY, type Hotkey } from "@/input/hotkeys"
+import { normalizeHotkey, UNBOUND_HOTKEY, type Hotkey } from "@/input/hotkeys"
 
 export type ClickRateUnit = "s" | "m" | "h" | "d"
 export type ClickMode = "toggle" | "hold"
@@ -13,6 +13,25 @@ export type AutoClickerSettings = {
   hotkey: Hotkey
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  clickLimitEnabled: boolean
+  clickLimit: string
+}
+
+export type SavedHotkey = {
+  code?: string | null
+  label?: string | null
+  source?: string | null
+}
+
+export type SavedAutoClickerSettings = {
+  clickMode?: string | null
+  clickRate?: string | null
+  clickRateUnit?: string | null
+  hotkey?: SavedHotkey | null
+  mouseButton?: string | null
+  mouseAction?: string | null
+  clickLimitEnabled?: boolean | null
+  clickLimit?: string | null
 }
 
 export const clickRateUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
@@ -50,4 +69,79 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   hotkey: { ...UNBOUND_HOTKEY },
   mouseButton: "left",
   mouseAction: "click",
+  clickLimitEnabled: false,
+  clickLimit: "100",
+}
+
+function resolveOption<T extends string>(
+  value: string | null | undefined,
+  options: readonly T[],
+  fallback: T
+) {
+  if (typeof value !== "string") {
+    return fallback
+  }
+
+  return (options as readonly string[]).includes(value) ? (value as T) : fallback
+}
+
+function normalizeHotkeySource(value: string | null | undefined): Hotkey["source"] {
+  if (value === "mouse" || value === "mixed") {
+    return value
+  }
+
+  return "keyboard"
+}
+
+export function normalizeAutoClickerSettings(
+  settings: SavedAutoClickerSettings | null | undefined
+): AutoClickerSettings {
+  const hotkey = settings?.hotkey
+
+  return {
+    clickMode: resolveOption(
+      settings?.clickMode,
+      clickModes,
+      defaultAutoClickerSettings.clickMode
+    ),
+    clickRate:
+      typeof settings?.clickRate === "string"
+        ? settings.clickRate
+        : defaultAutoClickerSettings.clickRate,
+    clickRateUnit: resolveOption(
+      settings?.clickRateUnit,
+      clickRateUnits,
+      defaultAutoClickerSettings.clickRateUnit
+    ),
+    hotkey: normalizeHotkey(
+      hotkey
+        ? {
+            code: typeof hotkey.code === "string" ? hotkey.code : "",
+            label:
+              typeof hotkey.label === "string"
+                ? hotkey.label
+                : defaultAutoClickerSettings.hotkey.label,
+            source: normalizeHotkeySource(hotkey.source),
+          }
+        : defaultAutoClickerSettings.hotkey
+    ),
+    mouseButton: resolveOption(
+      settings?.mouseButton,
+      mouseButtons,
+      defaultAutoClickerSettings.mouseButton
+    ),
+    mouseAction: resolveOption(
+      settings?.mouseAction,
+      mouseActions,
+      defaultAutoClickerSettings.mouseAction
+    ),
+    clickLimitEnabled:
+      typeof settings?.clickLimitEnabled === "boolean"
+        ? settings.clickLimitEnabled
+        : defaultAutoClickerSettings.clickLimitEnabled,
+    clickLimit:
+      typeof settings?.clickLimit === "string"
+        ? settings.clickLimit
+        : defaultAutoClickerSettings.clickLimit,
+  }
 }

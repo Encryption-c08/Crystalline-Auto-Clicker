@@ -45,8 +45,9 @@ const modifierHotkeyParts: HotkeyPart[] = [
 
 const mouseHotkeyParts = [
   { button: 0, mask: 1, part: { code: "Mouse1", label: "Mouse 1", source: "mouse" as const } },
-  { button: 1, mask: 2, part: { code: "Mouse3", label: "Mouse 3", source: "mouse" as const } },
-  { button: 2, mask: 4, part: { code: "Mouse2", label: "Mouse 2", source: "mouse" as const } },
+  // DOM MouseEvent.buttons uses left=1, right=2, middle=4.
+  { button: 1, mask: 4, part: { code: "Mouse3", label: "Mouse 3", source: "mouse" as const } },
+  { button: 2, mask: 2, part: { code: "Mouse2", label: "Mouse 2", source: "mouse" as const } },
   { button: 3, mask: 8, part: { code: "Mouse4", label: "Mouse 4", source: "mouse" as const } },
   { button: 4, mask: 16, part: { code: "Mouse5", label: "Mouse 5", source: "mouse" as const } },
 ]

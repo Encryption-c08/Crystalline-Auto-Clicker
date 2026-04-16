@@ -19,6 +19,13 @@ pub(crate) struct ParsedHotkey {
     parts: Vec<HotkeyPart>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CapturedHotkey {
+    pub code: String,
+    pub label: String,
+    pub source: String,
+}
+
 impl ParsedHotkey {
     fn normalized_code(&self) -> String {
         self.parts
@@ -116,6 +123,112 @@ pub(crate) fn read_hotkey_state(code: &str) -> Result<bool, String> {
     }
 
     Ok(true)
+}
+
+pub(crate) fn read_pressed_keyboard_hotkey() -> Result<Option<CapturedHotkey>, String> {
+    let mut parts = Vec::new();
+
+    if is_virtual_key_pressed(VK_CONTROL as i32) {
+        parts.push(simple_hotkey_part("Ctrl", "Ctrl", VK_CONTROL.into(), true));
+    }
+
+    if is_virtual_key_pressed(VK_SHIFT as i32) {
+        parts.push(simple_hotkey_part("Shift", "Shift", VK_SHIFT.into(), true));
+    }
+
+    if is_virtual_key_pressed(VK_MENU as i32) {
+        parts.push(simple_hotkey_part("Alt", "Alt", VK_MENU.into(), true));
+    }
+
+    push_pressed_key(&mut parts, "Space", "Space", VK_SPACE as i32);
+    push_pressed_key(&mut parts, "Tab", "Tab", VK_TAB as i32);
+    push_pressed_key(&mut parts, "Enter", "Enter", VK_RETURN as i32);
+    push_pressed_key(&mut parts, "Escape", "Esc", VK_ESCAPE as i32);
+    push_pressed_key(&mut parts, "Backspace", "Backspace", VK_BACK as i32);
+    push_pressed_key(&mut parts, "Delete", "Delete", VK_DELETE as i32);
+    push_pressed_key(&mut parts, "Insert", "Insert", VK_INSERT as i32);
+    push_pressed_key(&mut parts, "Home", "Home", VK_HOME as i32);
+    push_pressed_key(&mut parts, "End", "End", VK_END as i32);
+    push_pressed_key(&mut parts, "PageUp", "PgUp", VK_PRIOR as i32);
+    push_pressed_key(&mut parts, "PageDown", "PgDn", VK_NEXT as i32);
+    push_pressed_key(&mut parts, "ArrowUp", "Up", VK_UP as i32);
+    push_pressed_key(&mut parts, "ArrowDown", "Down", VK_DOWN as i32);
+    push_pressed_key(&mut parts, "ArrowLeft", "Left", VK_LEFT as i32);
+    push_pressed_key(&mut parts, "ArrowRight", "Right", VK_RIGHT as i32);
+    push_pressed_key(&mut parts, "NumpadAdd", "Num +", VK_ADD as i32);
+    push_pressed_key(&mut parts, "NumpadSubtract", "Num -", VK_SUBTRACT as i32);
+    push_pressed_key(&mut parts, "NumpadMultiply", "Num *", VK_MULTIPLY as i32);
+    push_pressed_key(&mut parts, "NumpadDivide", "Num /", VK_DIVIDE as i32);
+    push_pressed_key(&mut parts, "NumpadDecimal", "Num .", VK_DECIMAL as i32);
+
+    for letter in b'A'..=b'Z' {
+        let virtual_key = letter as i32;
+        if is_virtual_key_pressed(virtual_key) {
+            let letter = letter as char;
+            parts.push(simple_hotkey_part(
+                &format!("Key{letter}"),
+                &letter.to_string(),
+                virtual_key,
+                false,
+            ));
+        }
+    }
+
+    for digit in b'0'..=b'9' {
+        let virtual_key = digit as i32;
+        if is_virtual_key_pressed(virtual_key) {
+            let digit = digit as char;
+            parts.push(simple_hotkey_part(
+                &format!("Digit{digit}"),
+                &digit.to_string(),
+                virtual_key,
+                false,
+            ));
+        }
+    }
+
+    for value in 0..=9 {
+        let virtual_key = VK_NUMPAD0 as i32 + value;
+        if is_virtual_key_pressed(virtual_key) {
+            let digit = char::from(b'0' + value as u8);
+            parts.push(simple_hotkey_part(
+                &format!("Numpad{digit}"),
+                &format!("Num {digit}"),
+                virtual_key,
+                false,
+            ));
+        }
+    }
+
+    for value in 1..=24 {
+        let virtual_key = VK_F1 as i32 + (value - 1);
+        if is_virtual_key_pressed(virtual_key) {
+            parts.push(simple_hotkey_part(
+                &format!("F{value}"),
+                &format!("F{value}"),
+                virtual_key,
+                false,
+            ));
+        }
+    }
+
+    if !parts.iter().any(|part| !part.is_modifier) {
+        return Ok(None);
+    }
+
+    Ok(Some(CapturedHotkey {
+        code: parts
+            .iter()
+            .map(|part| part.code.as_str())
+            .collect::<Vec<_>>()
+            .join("+"),
+        label: parts
+            .iter()
+            .map(|part| part.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" + "),
+        source: "keyboard".to_string(),
+    }))
 }
 
 fn hotkey_code_parts(code: &str) -> impl Iterator<Item = &str> {
@@ -250,6 +363,18 @@ fn simple_hotkey_part(code: &str, label: &str, virtual_key: i32, is_modifier: bo
         virtual_key,
         is_modifier,
     }
+}
+
+fn push_pressed_key(parts: &mut Vec<HotkeyPart>, code: &str, label: &str, virtual_key: i32) {
+    if !is_virtual_key_pressed(virtual_key) {
+        return;
+    }
+
+    parts.push(simple_hotkey_part(code, label, virtual_key, false));
+}
+
+fn is_virtual_key_pressed(virtual_key: i32) -> bool {
+    unsafe { (GetAsyncKeyState(virtual_key) as u16 & 0x8000) != 0 }
 }
 
 fn modifier_sort_index(code: &str) -> usize {
