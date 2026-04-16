@@ -44,6 +44,9 @@ use hotkeys::{
 const DEFAULT_CLICK_LIMIT: &str = "100";
 const MIN_CLICK_LIMIT: u64 = 1;
 const MAX_CLICK_LIMIT: u64 = 1_000_000;
+const DEFAULT_TIME_LIMIT: &str = "60";
+const MIN_TIME_LIMIT: u64 = 1;
+const MAX_TIME_LIMIT: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -98,6 +101,9 @@ pub struct AutoClickerCommandConfig {
     pub mouse_action: MouseAction,
     pub click_limit_enabled: bool,
     pub click_limit: String,
+    pub time_limit_enabled: bool,
+    pub time_limit: String,
+    pub time_limit_unit: ClickRateUnit,
     pub click_engine: ClickEngine,
 }
 
@@ -126,6 +132,9 @@ impl Default for AutoClickerCommandConfig {
             mouse_action: MouseAction::Click,
             click_limit_enabled: false,
             click_limit: DEFAULT_CLICK_LIMIT.into(),
+            time_limit_enabled: false,
+            time_limit: DEFAULT_TIME_LIMIT.into(),
+            time_limit_unit: ClickRateUnit::S,
             click_engine: ClickEngine::Classic,
         }
     }
@@ -276,10 +285,12 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         }
         let mut clicker_enabled = false;
-        let mut click_limit_locked_until_release = false;
+        let mut limit_locked_until_release = false;
         let mut hotkey_was_pressed = false;
         let mut held_mouse_button: Option<MouseButton> = None;
         let mut remaining_click_limit: Option<u64> = None;
+        let mut remaining_time_limit: Option<Duration> = None;
+        let mut last_time_limit_tick: Option<Instant> = None;
         let mut cadence_carry_nanos = 0_u64;
         let mut last_schedule_config: Option<AutoClickerCommandConfig> = None;
         let mut next_click_at: Option<Instant> = None;
@@ -301,8 +312,10 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
             if config_changed {
                 cadence_carry_nanos = 0;
-                click_limit_locked_until_release = false;
+                limit_locked_until_release = false;
                 remaining_click_limit = None;
+                remaining_time_limit = None;
+                last_time_limit_tick = None;
                 last_schedule_config = Some(config.clone());
                 next_click_at = None;
             }
@@ -314,6 +327,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             let cadence = cadence_result.as_ref().ok().copied().flatten();
             let click_limit_result = click_limit_from_config(&config);
             let click_limit = click_limit_result.as_ref().ok().and_then(|limit| *limit);
+            let time_limit_result = time_limit_from_config(&config);
+            let time_limit = time_limit_result.as_ref().ok().copied().flatten();
             let hotkey_result = read_hotkey_state(&config.hotkey_code);
             let hotkey_pressed = hotkey_result
                 .as_ref()
@@ -322,21 +337,26 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             let was_clicker_enabled = clicker_enabled;
 
             if !hotkey_pressed {
-                click_limit_locked_until_release = false;
+                limit_locked_until_release = false;
             }
 
-            if hotkey_result.is_err() || cadence_result.is_err() || click_limit_result.is_err() {
+            if hotkey_result.is_err()
+                || cadence_result.is_err()
+                || click_limit_result.is_err()
+                || time_limit_result.is_err()
+            {
                 clicker_enabled = false;
-                click_limit_locked_until_release = false;
+                limit_locked_until_release = false;
                 hotkey_was_pressed = false;
                 remaining_click_limit = None;
+                remaining_time_limit = None;
+                last_time_limit_tick = None;
                 cadence_carry_nanos = 0;
                 next_click_at = None;
             } else {
                 match config.click_mode {
                     ClickMode::Hold => {
-                        clicker_enabled =
-                            hotkey_pressed && !click_limit_locked_until_release;
+                        clicker_enabled = hotkey_pressed && !limit_locked_until_release;
                         if !clicker_enabled {
                             cadence_carry_nanos = 0;
                             next_click_at = None;
@@ -355,14 +375,20 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
                 if !was_clicker_enabled && clicker_enabled {
                     remaining_click_limit = click_limit;
+                    remaining_time_limit = time_limit;
+                    last_time_limit_tick = None;
                 }
 
                 if config_changed && clicker_enabled {
                     remaining_click_limit = click_limit;
+                    remaining_time_limit = time_limit;
+                    last_time_limit_tick = None;
                 }
 
                 if was_clicker_enabled && !clicker_enabled {
                     remaining_click_limit = None;
+                    remaining_time_limit = None;
+                    last_time_limit_tick = None;
                 }
             }
 
@@ -371,6 +397,38 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .as_ref()
                 .map(|active| *active)
                 .unwrap_or(false);
+
+            let time_limit_expired = if clicker_enabled && !paused_for_app_window {
+                if let Some(remaining_time_limit) = remaining_time_limit.as_mut() {
+                    let now = Instant::now();
+                    if let Some(last_tick) = last_time_limit_tick.replace(now) {
+                        match remaining_time_limit.checked_sub(now.saturating_duration_since(last_tick)) {
+                            Some(next_remaining) => {
+                                *remaining_time_limit = next_remaining;
+                                false
+                            }
+                            None => true,
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                last_time_limit_tick = None;
+                false
+            };
+
+            if time_limit_expired {
+                clicker_enabled = false;
+                limit_locked_until_release = true;
+                remaining_click_limit = None;
+                remaining_time_limit = None;
+                last_time_limit_tick = None;
+                cadence_carry_nanos = 0;
+                next_click_at = None;
+            }
 
             let click_result = if clicker_enabled && !paused_for_app_window {
                 match config.mouse_action {
@@ -381,6 +439,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                             clicker_enabled = false;
                             cadence_carry_nanos = 0;
                             next_click_at = None;
+                            remaining_time_limit = None;
+                            last_time_limit_tick = None;
                             Some(error)
                         } else if let Some(cadence) = cadence {
                             if next_click_at.is_none() {
@@ -424,8 +484,10 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
                                     if click_count == 0 {
                                         clicker_enabled = false;
-                                        click_limit_locked_until_release = true;
+                                        limit_locked_until_release = true;
                                         remaining_click_limit = None;
+                                        remaining_time_limit = None;
+                                        last_time_limit_tick = None;
                                         cadence_carry_nanos = 0;
                                         next_click_at = None;
                                         None
@@ -442,8 +504,10 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                     remaining.saturating_sub(click_count as u64);
                                                 if *remaining == 0 {
                                                     clicker_enabled = false;
-                                                    click_limit_locked_until_release = true;
+                                                    limit_locked_until_release = true;
                                                     remaining_click_limit = None;
+                                                    remaining_time_limit = None;
+                                                    last_time_limit_tick = None;
                                                     cadence_carry_nanos = 0;
                                                     next_click_at = None;
                                                 } else {
@@ -455,6 +519,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         } else {
                                             clicker_enabled = false;
                                             remaining_click_limit = None;
+                                            remaining_time_limit = None;
+                                            last_time_limit_tick = None;
                                             cadence_carry_nanos = 0;
                                             next_click_at = None;
                                         }
@@ -468,6 +534,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                         } else {
                             clicker_enabled = false;
                             remaining_click_limit = None;
+                            remaining_time_limit = None;
+                            last_time_limit_tick = None;
                             cadence_carry_nanos = 0;
                             next_click_at = None;
                             None
@@ -485,6 +553,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                             Err(error) => {
                                 clicker_enabled = false;
                                 remaining_click_limit = None;
+                                remaining_time_limit = None;
+                                last_time_limit_tick = None;
                                 Some(error)
                             }
                         }
@@ -499,6 +569,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     Err(error) => {
                         clicker_enabled = false;
                         remaining_click_limit = None;
+                        remaining_time_limit = None;
+                        last_time_limit_tick = None;
                         Some(error)
                     }
                 }
@@ -515,6 +587,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     .err()
                     .or_else(|| cadence_result.err())
                     .or_else(|| click_limit_result.err())
+                    .or_else(|| time_limit_result.err())
                     .or_else(|| app_window_active_result.err())
                     .or(click_result);
             }
@@ -596,6 +669,7 @@ fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(),
     }
 
     click_limit_from_config(config)?;
+    time_limit_from_config(config)?;
 
     Ok(())
 }
@@ -607,6 +681,7 @@ fn normalize_auto_clicker_config(
     config.hotkey_code = normalize_hotkey_code(&config.hotkey_code)?;
     config.hotkey_label = format_hotkey_label(&config.hotkey_code)?;
     config.click_limit = normalize_click_limit_value(&config.click_limit)?;
+    config.time_limit = normalize_time_limit_value(&config.time_limit)?;
     validate_auto_clicker_config(&config)?;
     Ok(config)
 }
@@ -645,6 +720,57 @@ fn parse_click_limit_value(value: &str) -> Result<u64, String> {
     }
 
     Ok(click_limit)
+}
+
+#[cfg(target_os = "windows")]
+fn time_limit_from_config(config: &AutoClickerCommandConfig) -> Result<Option<Duration>, String> {
+    if !config.time_limit_enabled || !matches!(config.click_mode, ClickMode::Toggle) {
+        return Ok(None);
+    }
+
+    let time_limit_value = parse_time_limit_value(&config.time_limit)?;
+    let time_limit_ms = time_limit_value
+        .checked_mul(time_limit_unit_ms(config.time_limit_unit))
+        .ok_or_else(|| "Time limit is too large.".to_string())?;
+
+    Ok(Some(Duration::from_millis(time_limit_ms)))
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_time_limit_value(value: &str) -> Result<String, String> {
+    Ok(parse_time_limit_value(value)?.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn parse_time_limit_value(value: &str) -> Result<u64, String> {
+    let trimmed_value = value.trim();
+    let normalized_value = if trimmed_value.is_empty() {
+        DEFAULT_TIME_LIMIT
+    } else {
+        trimmed_value
+    };
+
+    let time_limit = normalized_value
+        .parse::<u64>()
+        .map_err(|_| "Time limit must be a whole number.".to_string())?;
+
+    if !(MIN_TIME_LIMIT..=MAX_TIME_LIMIT).contains(&time_limit) {
+        return Err(format!(
+            "Time limit must be between {MIN_TIME_LIMIT} and {MAX_TIME_LIMIT}."
+        ));
+    }
+
+    Ok(time_limit)
+}
+
+#[cfg(target_os = "windows")]
+fn time_limit_unit_ms(unit: ClickRateUnit) -> u64 {
+    match unit {
+        ClickRateUnit::S => 1_000,
+        ClickRateUnit::M => 60_000,
+        ClickRateUnit::H => 3_600_000,
+        ClickRateUnit::D => 86_400_000,
+    }
 }
 
 #[cfg(target_os = "windows")]

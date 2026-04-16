@@ -15,6 +15,9 @@ export type AutoClickerSettings = {
   mouseAction: MouseActionOption
   clickLimitEnabled: boolean
   clickLimit: string
+  timeLimitEnabled: boolean
+  timeLimit: string
+  timeLimitUnit: ClickRateUnit
 }
 
 export type SavedHotkey = {
@@ -32,6 +35,9 @@ export type SavedAutoClickerSettings = {
   mouseAction?: string | null
   clickLimitEnabled?: boolean | null
   clickLimit?: string | null
+  timeLimitEnabled?: boolean | null
+  timeLimit?: string | null
+  timeLimitUnit?: string | null
 }
 
 export const clickRateUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
@@ -71,6 +77,9 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   mouseAction: "click",
   clickLimitEnabled: false,
   clickLimit: "100",
+  timeLimitEnabled: false,
+  timeLimit: "60",
+  timeLimitUnit: "s",
 }
 
 function resolveOption<T extends string>(
@@ -143,5 +152,18 @@ export function normalizeAutoClickerSettings(
       typeof settings?.clickLimit === "string"
         ? settings.clickLimit
         : defaultAutoClickerSettings.clickLimit,
+    timeLimitEnabled:
+      typeof settings?.timeLimitEnabled === "boolean"
+        ? settings.timeLimitEnabled
+        : defaultAutoClickerSettings.timeLimitEnabled,
+    timeLimit:
+      typeof settings?.timeLimit === "string"
+        ? settings.timeLimit
+        : defaultAutoClickerSettings.timeLimit,
+    timeLimitUnit: resolveOption(
+      settings?.timeLimitUnit,
+      clickRateUnits,
+      defaultAutoClickerSettings.timeLimitUnit
+    ),
   }
 }

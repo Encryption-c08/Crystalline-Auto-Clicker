@@ -5,6 +5,7 @@ import { buildAutoClickerConfig } from "@/config/runtime"
 import { ClickLimitPanel } from "@/components/click-limit-panel"
 import { PanelFrame } from "@/components/panel-frame"
 import { SettingsPanel } from "@/components/settings-panel"
+import { TimeLimitPanel } from "@/components/time-limit-panel"
 import { TitleBar } from "@/components/title-bar"
 import { configureAutoClicker } from "@/lib/auto-clicker"
 import {
@@ -85,7 +86,10 @@ export default function App() {
             settings={settings}
           />
 
-          <ClickLimitPanel setSettings={setSettings} settings={settings} />
+          <div className="flex flex-col items-start gap-3">
+            <ClickLimitPanel setSettings={setSettings} settings={settings} />
+            <TimeLimitPanel setSettings={setSettings} settings={settings} />
+          </div>
 
           <div className="grid min-h-0 gap-3 min-[720px]:grid-cols-[minmax(0,1fr)_180px]">
             <div className="grid min-h-0 gap-3 md:grid-cols-2">

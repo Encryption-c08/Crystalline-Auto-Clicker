@@ -19,6 +19,8 @@ export const MIN_CLICK_RATE = 1
 export const MAX_CLICK_RATE = 5_000
 export const MIN_CLICK_LIMIT = 1
 export const MAX_CLICK_LIMIT = 1_000_000
+export const MIN_TIME_LIMIT = 1
+export const MAX_TIME_LIMIT = 1_000_000
 
 export type AutoClickerCommandConfig = {
   clickMode: ClickMode
@@ -31,6 +33,9 @@ export type AutoClickerCommandConfig = {
   mouseAction: MouseActionOption
   clickLimitEnabled: boolean
   clickLimit: string
+  timeLimitEnabled: boolean
+  timeLimit: string
+  timeLimitUnit: ClickRateUnit
   clickEngine: ClickEngine
 }
 
@@ -82,6 +87,25 @@ export function finalizeClickLimit(value: string) {
   return normalizeClickLimitInput(value) || "100"
 }
 
+export function normalizeTimeLimitInput(value: string) {
+  const digitsOnly = value.replace(/[^0-9]/g, "")
+
+  if (digitsOnly === "") {
+    return ""
+  }
+
+  const nextValue = Number.parseInt(digitsOnly, 10)
+  if (Number.isNaN(nextValue)) {
+    return String(MIN_TIME_LIMIT)
+  }
+
+  return String(Math.min(MAX_TIME_LIMIT, Math.max(MIN_TIME_LIMIT, nextValue)))
+}
+
+export function finalizeTimeLimit(value: string) {
+  return normalizeTimeLimitInput(value) || "60"
+}
+
 export function resolveClickIntervalMs(
   clickRate: string,
   clickRateUnit: ClickRateUnit
@@ -97,6 +121,7 @@ export function buildAutoClickerConfig(
 ): AutoClickerCommandConfig {
   const clickRate = finalizeClickRate(settings.clickRate)
   const clickLimit = finalizeClickLimit(settings.clickLimit)
+  const timeLimit = finalizeTimeLimit(settings.timeLimit)
   const hotkeyCode = normalizeHotkeyCode(settings.hotkey.code)
 
   return {
@@ -110,6 +135,9 @@ export function buildAutoClickerConfig(
     mouseAction: settings.mouseAction,
     clickLimitEnabled: settings.clickLimitEnabled,
     clickLimit,
+    timeLimitEnabled: settings.timeLimitEnabled,
+    timeLimit,
+    timeLimitUnit: settings.timeLimitUnit,
     clickEngine: "throughput",
   }
 }

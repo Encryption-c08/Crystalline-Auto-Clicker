@@ -52,6 +52,9 @@ struct PersistedAutoClickerSettings {
     mouse_action: Option<String>,
     click_limit_enabled: Option<bool>,
     click_limit: Option<String>,
+    time_limit_enabled: Option<bool>,
+    time_limit: Option<String>,
+    time_limit_unit: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
