@@ -1,5 +1,6 @@
 import type {
   AutoClickerSettings,
+  ClickPosition,
   ClickEngine,
   ClickMode,
   ClickRateMode,
@@ -36,6 +37,8 @@ export type AutoClickerCommandConfig = {
   intervalMs: number
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  clickPositionEnabled: boolean
+  clickPositions: ClickPosition[]
   doubleClickEnabled: boolean
   doubleClickDelay: string
   clickDurationEnabled: boolean
@@ -291,6 +294,8 @@ export function buildAutoClickerConfig(
     ),
     mouseButton: settings.mouseButton,
     mouseAction: settings.mouseAction,
+    clickPositionEnabled: settings.clickPositionEnabled,
+    clickPositions: settings.clickPositions,
     doubleClickEnabled: settings.doubleClickEnabled,
     doubleClickDelay,
     clickDurationEnabled: settings.clickDurationEnabled,

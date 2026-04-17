@@ -3,10 +3,13 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "click-position-overlay"
   ],
   "permissions": [
     "core:default",
+    "core:event:default",
+    "core:event:allow-listen",
     "core:window:default",
     "core:window:allow-close",
     "core:window:allow-minimize",

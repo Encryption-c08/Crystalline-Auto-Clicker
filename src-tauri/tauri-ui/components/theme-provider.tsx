@@ -107,7 +107,7 @@ export function ThemeProvider({
     [disableTransitionOnChange]
   )
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     applyTheme(theme)
 
     if (theme !== "system") {

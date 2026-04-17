@@ -1,7 +1,10 @@
-use std::{fs, io::ErrorKind, path::PathBuf, thread, time::Duration};
+use std::{fs, io::ErrorKind, path::PathBuf, sync::Mutex, thread, time::Duration};
 
 use serde::{Deserialize, Serialize};
-use tauri::{webview::PageLoadEvent, LogicalSize, Manager, Size};
+use tauri::{
+    webview::PageLoadEvent, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Size,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
 
@@ -9,11 +12,12 @@ use tauri_plugin_opener::OpenerExt;
 use std::sync::atomic::{AtomicIsize, Ordering};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     Media::{timeBeginPeriod, timeEndPeriod, TIMERR_NOERROR},
     UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, GetWindowLongPtrW, SetWindowLongPtrW, GWLP_WNDPROC,
-        SC_KEYMENU, WM_SYSCOMMAND,
+        CallWindowProcW, DefWindowProcW, GetCursorPos, GetSystemMetrics, GetWindowLongPtrW,
+        SetWindowLongPtrW, GWLP_WNDPROC, SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
     },
 };
 
@@ -24,10 +28,14 @@ use auto_clicker::{AutoClickerCommandConfig, AutoClickerController, AutoClickerS
 
 struct AppState {
     auto_clicker: AutoClickerController,
+    click_position_overlay: Mutex<ClickPositionOverlayState>,
+    click_position_overlay_loaded: Mutex<bool>,
 }
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const SETTINGS_DIR_NAME: &str = "Crystalline Auto Clicker";
+const CLICK_POSITION_OVERLAY_EVENT: &str = "click-position-overlay:update";
+const CLICK_POSITION_OVERLAY_WINDOW_LABEL: &str = "click-position-overlay";
 
 #[cfg(target_os = "windows")]
 static MAIN_WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -70,6 +78,14 @@ struct PersistedHotkey {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PersistedClickPosition {
+    id: Option<u32>,
+    x: Option<i32>,
+    y: Option<i32>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedAutoClickerSettings {
     theme: Option<String>,
     click_mode: Option<String>,
@@ -79,6 +95,10 @@ struct PersistedAutoClickerSettings {
     hotkey: Option<PersistedHotkey>,
     mouse_button: Option<String>,
     mouse_action: Option<String>,
+    click_position_enabled: Option<bool>,
+    click_position_dots_visible: Option<bool>,
+    click_position_hotkey: Option<PersistedHotkey>,
+    click_positions: Option<Vec<PersistedClickPosition>>,
     double_click_enabled: Option<bool>,
     double_click_delay: Option<String>,
     click_duration_enabled: Option<bool>,
@@ -109,6 +129,41 @@ struct HotkeyCaptureResponse {
     source: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClickPositionPointDto {
+    id: u32,
+    x: i32,
+    y: i32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClickPositionOverlayRequest {
+    editable: bool,
+    positions: Vec<ClickPositionPointDto>,
+    visible: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClickPositionOverlayState {
+    editable: bool,
+    height: i32,
+    origin_x: i32,
+    origin_y: i32,
+    positions: Vec<ClickPositionPointDto>,
+    visible: bool,
+    width: i32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorPositionResponse {
+    x: i32,
+    y: i32,
+}
+
 fn settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .config_dir()
@@ -121,6 +176,117 @@ fn legacy_settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> 
         .app_config_dir()
         .map(|path| path.join(SETTINGS_FILE_NAME))
         .map_err(|error| format!("Unable to resolve settings folder: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug)]
+struct VirtualScreenBounds {
+    height: i32,
+    width: i32,
+    x: i32,
+    y: i32,
+}
+
+#[cfg(target_os = "windows")]
+fn virtual_screen_bounds() -> VirtualScreenBounds {
+    let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) }.max(1);
+    let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) }.max(1);
+
+    VirtualScreenBounds {
+        height,
+        width,
+        x,
+        y,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_click_position_overlay_window(
+    app: &tauri::AppHandle,
+) -> Result<(WebviewWindow, bool), String> {
+    if let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
+        return Ok((window, false));
+    }
+
+    let bounds = virtual_screen_bounds();
+    let window = WebviewWindowBuilder::new(
+        app,
+        CLICK_POSITION_OVERLAY_WINDOW_LABEL,
+        WebviewUrl::App("overlay.html".into()),
+    )
+    .title("Crystalline Auto Clicker Overlay")
+    .decorations(false)
+    .transparent(true)
+    .resizable(false)
+    .visible(false)
+    .shadow(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focusable(false)
+    .focused(false)
+    .position(bounds.x as f64, bounds.y as f64)
+    .inner_size(bounds.width as f64, bounds.height as f64)
+    .build()
+    .map_err(|error| format!("Unable to create click position overlay: {error}"))?;
+
+    configure_click_position_overlay_window(&window, &ClickPositionOverlayState::default())?;
+
+    Ok((window, true))
+}
+
+#[cfg(target_os = "windows")]
+fn sync_click_position_overlay_window_bounds(window: &WebviewWindow) -> Result<(), String> {
+    let bounds = virtual_screen_bounds();
+
+    window
+        .set_position(PhysicalPosition::new(bounds.x, bounds.y))
+        .map_err(|error| format!("Unable to position click position overlay: {error}"))?;
+    window
+        .set_size(PhysicalSize::new(bounds.width as u32, bounds.height as u32))
+        .map_err(|error| format!("Unable to size click position overlay: {error}"))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn configure_click_position_overlay_window(
+    window: &WebviewWindow,
+    overlay_state: &ClickPositionOverlayState,
+) -> Result<(), String> {
+    sync_click_position_overlay_window_bounds(window)?;
+    window
+        .set_focusable(false)
+        .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))?;
+    window
+        .set_ignore_cursor_events(!overlay_state.editable)
+        .map_err(|error| format!("Unable to configure click position overlay: {error}"))?;
+
+    Ok(())
+}
+
+fn click_position_overlay_state(
+    overlay: ClickPositionOverlayRequest,
+) -> ClickPositionOverlayState {
+    #[cfg(target_os = "windows")]
+    let (origin_x, origin_y, width, height) = {
+        let bounds = virtual_screen_bounds();
+        (bounds.x, bounds.y, bounds.width, bounds.height)
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let (origin_x, origin_y, width, height) = (0, 0, 0, 0);
+
+    ClickPositionOverlayState {
+        editable: overlay.editable,
+        height,
+        origin_x,
+        origin_y,
+        positions: overlay.positions,
+        visible: overlay.visible,
+        width,
+    }
 }
 
 #[tauri::command]
@@ -181,6 +347,163 @@ fn save_auto_clicker_settings(
     fs::write(&path, contents).map_err(|error| format!("Unable to write settings: {error}"))
 }
 
+#[tauri::command]
+fn get_click_position_overlay_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<ClickPositionOverlayState, String> {
+    state
+        .click_position_overlay
+        .lock()
+        .map(|overlay| overlay.clone())
+        .map_err(|_| "Failed to lock click position overlay state".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn get_current_cursor_position() -> Result<CursorPositionResponse, String> {
+    let mut point = POINT { x: 0, y: 0 };
+
+    if unsafe { GetCursorPos(&mut point) } == 0 {
+        return Err("Unable to read cursor position.".into());
+    }
+
+    Ok(CursorPositionResponse {
+        x: point.x,
+        y: point.y,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_current_cursor_position() -> Result<CursorPositionResponse, String> {
+    Ok(CursorPositionResponse::default())
+}
+
+#[tauri::command]
+fn sync_click_position_overlay(
+    app: tauri::AppHandle,
+    overlay: ClickPositionOverlayRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let overlay_state = click_position_overlay_state(overlay);
+
+    {
+        let mut current = state
+            .click_position_overlay
+            .lock()
+            .map_err(|_| "Failed to lock click position overlay state".to_string())?;
+        *current = overlay_state.clone();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if !overlay_state.visible {
+            if let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
+                let overlay_loaded = state
+                    .click_position_overlay_loaded
+                    .lock()
+                    .map(|loaded| *loaded)
+                    .unwrap_or(false);
+
+                let _ = configure_click_position_overlay_window(&window, &overlay_state);
+                if overlay_loaded {
+                    let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
+                }
+                let _ = window.hide();
+            }
+
+            return Ok(());
+        }
+
+        let (window, created) = ensure_click_position_overlay_window(&app)?;
+        let overlay_loaded = state
+            .click_position_overlay_loaded
+            .lock()
+            .map(|loaded| *loaded)
+            .unwrap_or(false);
+
+        configure_click_position_overlay_window(&window, &overlay_state)?;
+
+        if created || !overlay_loaded {
+            return Ok(());
+        }
+
+        let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
+        window
+            .show()
+            .map_err(|error| format!("Unable to show click position overlay: {error}"))?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn notify_webview_ready(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if window.label() == "main" {
+        return window
+            .show()
+            .map_err(|error| format!("Unable to show main window: {error}"));
+    }
+
+    if window.label() == CLICK_POSITION_OVERLAY_WINDOW_LABEL {
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(mut loaded) = state.click_position_overlay_loaded.lock() {
+                *loaded = true;
+            }
+
+            let overlay_state = state
+                .click_position_overlay
+                .lock()
+                .map(|overlay| overlay.clone())
+                .unwrap_or_default();
+
+            configure_click_position_overlay_window(&window, &overlay_state)?;
+            let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
+
+            if overlay_state.visible {
+                window
+                    .show()
+                    .map_err(|error| format!("Unable to show click position overlay: {error}"))?;
+            } else {
+                window
+                    .hide()
+                    .map_err(|error| format!("Unable to hide click position overlay: {error}"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn set_click_position_overlay_interactive(
+    app: tauri::AppHandle,
+    interactive: bool,
+) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) else {
+        return Ok(());
+    };
+
+    sync_click_position_overlay_window_bounds(&window)?;
+    window
+        .set_focusable(false)
+        .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))?;
+    window
+        .set_ignore_cursor_events(!interactive)
+        .map_err(|error| format!("Unable to update click position overlay interactivity: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_click_position_overlay_interactive(_interactive: bool) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 #[tauri::command]
 fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, String> {
@@ -195,6 +518,18 @@ fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, Strin
 #[tauri::command]
 fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, String> {
     Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn read_global_hotkey_state(code: String) -> Result<bool, String> {
+    auto_clicker::read_hotkey_state(&code, auto_clicker::ClickMode::Hold)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn read_global_hotkey_state(_code: String) -> Result<bool, String> {
+    Ok(false)
 }
 
 #[tauri::command]
@@ -373,6 +708,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             auto_clicker: AutoClickerController::new(),
+            click_position_overlay: Mutex::new(ClickPositionOverlayState::default()),
+            click_position_overlay_loaded: Mutex::new(false),
         })
         .setup(|app| {
             #[cfg(target_os = "windows")]
@@ -384,6 +721,16 @@ pub fn run() {
                             .auto_clicker
                             .set_main_window_handle(hwnd.0 as isize);
                     }
+                }
+
+                if let Some(overlay_window) =
+                    app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
+                {
+                    let _ = configure_click_position_overlay_window(
+                        &overlay_window,
+                        &ClickPositionOverlayState::default(),
+                    );
+                    let _ = overlay_window.hide();
                 }
             }
 
@@ -405,9 +752,42 @@ pub fn run() {
             get_auto_clicker_status,
             load_auto_clicker_settings,
             save_auto_clicker_settings,
+            get_click_position_overlay_state,
+            get_current_cursor_position,
+            sync_click_position_overlay,
+            notify_webview_ready,
+            set_click_position_overlay_interactive,
             read_pressed_keyboard_hotkey,
+            read_global_hotkey_state,
             sync_main_window_frame
         ])
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+
+                    if let Some(overlay_window) =
+                        window.app_handle().get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
+                    {
+                        let _ = overlay_window.destroy();
+                    }
+
+                    window.app_handle().exit(0);
+                }
+                WindowEvent::Destroyed => {
+                    if let Some(overlay_window) =
+                        window.app_handle().get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
+                    {
+                        let _ = overlay_window.destroy();
+                    }
+                }
+                _ => {}
+            }
+        })
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {
                 log::info!("main webview finished loading");
@@ -420,7 +800,24 @@ pub fn run() {
                         .auto_clicker
                         .set_main_window_handle(hwnd.0 as isize);
                 }
-                let _ = webview.window().show();
+            }
+
+            if webview.label() == CLICK_POSITION_OVERLAY_WINDOW_LABEL
+                && matches!(payload.event(), PageLoadEvent::Finished)
+            {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Some(window) = webview
+                        .app_handle()
+                        .get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
+                    {
+                        let _ = configure_click_position_overlay_window(
+                            &window,
+                            &ClickPositionOverlayState::default(),
+                        );
+                        let _ = window.hide();
+                    }
+                }
             }
         })
         .run(tauri::generate_context!())

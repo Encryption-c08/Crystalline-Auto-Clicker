@@ -137,6 +137,15 @@ body {
   height: 100%;
 }
 
+html[data-overlay-window] {
+  background: transparent !important;
+}
+
+html[data-overlay-window] body,
+html[data-overlay-window] #root {
+  background: transparent !important;
+}
+
 body {
   overflow: hidden;
 }
@@ -219,8 +228,33 @@ body {
   }
 }
 
+.click-position-dot-enter {
+  animation: click-position-dot-enter 720ms cubic-bezier(0.2, 0.85, 0.2, 1);
+}
+
+@keyframes click-position-dot-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+
+  45% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .titlebar-typewriter-caret {
     animation: none;
+  }
+
+  .click-position-dot-enter {
+    animation-duration: 1ms;
   }
 }

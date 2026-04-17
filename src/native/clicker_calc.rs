@@ -8,8 +8,11 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
-use super::{AutoClickerCommandConfig, ClickRateMode, ClickRateUnit, MouseButton};
+use super::{
+    AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, MouseButton,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ClickDurationRange {
@@ -213,6 +216,14 @@ pub(crate) fn press_mouse_button(mouse_button: MouseButton) -> Result<(), String
 
 pub(crate) fn release_mouse_button(mouse_button: MouseButton) -> Result<(), String> {
     dispatch_mouse_button_event(mouse_button, false)
+}
+
+pub(crate) fn move_cursor_to_position(position: ClickPositionPoint) -> Result<(), String> {
+    if unsafe { SetCursorPos(position.x, position.y) } == 0 {
+        return Err("Unable to move cursor to the recorded click position.".into());
+    }
+
+    Ok(())
 }
 
 fn click_window_nanos(click_rate_unit: ClickRateUnit) -> u64 {

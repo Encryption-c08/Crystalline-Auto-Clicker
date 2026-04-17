@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 
+import { listen } from "@tauri-apps/api/event"
 import { Settings2Icon } from "lucide-react"
 
+import { ClickPositionPanel } from "@/components/click-position-panel"
 import { ClickDurationPanel } from "@/components/click-duration-panel"
 import type {
   DisabledDependencyCue,
@@ -22,9 +24,18 @@ import {
 } from "@/config/settings"
 import { configureAutoClicker } from "@/lib/auto-clicker"
 import {
+  CLICK_POSITION_OVERLAY_MOVE_EVENT,
+  type ClickPositionOverlayMoveEvent,
+  getClickPositionOverlayState,
+  getCurrentCursorPosition,
+  syncClickPositionOverlay,
+} from "@/lib/click-position-overlay"
+import { readGlobalHotkeyState } from "@/lib/global-hotkey"
+import {
   loadSavedAutoClickerSettings,
   saveAutoClickerSettings,
 } from "@/lib/settings-store"
+import { matchesKeyboardEventHotkey } from "@/input/hotkeys"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
 import { useTheme } from "@tauri-ui/components/theme-provider.tsx"
 import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
@@ -45,6 +56,20 @@ const SIMPLE_MIN_WINDOW_WIDTH = 560
 const ACTIVE_TAB_STORAGE_KEY = "crystalline-auto-clicker.active-tab"
 
 type AppTab = "advanced" | "settings" | "simple"
+
+function isEditableElement(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  if (target.isContentEditable) {
+    return true
+  }
+
+  return Boolean(
+    target.closest("input, textarea, select, [contenteditable='true']")
+  )
+}
 
 function normalizeAppTab(value: string | null | undefined): AppTab | null {
   if (value === "simple" || value === "advanced" || value === "settings") {
@@ -173,6 +198,75 @@ export default function App() {
     setDisabledDependencyCue(null)
   }
 
+  function appendClickPosition(x: number, y: number) {
+    setSettings((current) => {
+      const nextId =
+        current.clickPositions.reduce(
+          (maxId, position) => Math.max(maxId, position.id),
+          0
+        ) + 1
+
+      return {
+        ...current,
+        clickPositions: [
+          ...current.clickPositions,
+          {
+            id: nextId,
+            x: Math.round(x),
+            y: Math.round(y),
+          },
+        ],
+      }
+    })
+  }
+
+  async function addCenteredClickPosition() {
+    try {
+      const overlayState = await getClickPositionOverlayState()
+      const centerX =
+        overlayState.originX +
+        Math.round((overlayState.width || window.screen.availWidth) / 2)
+      const centerY =
+        overlayState.originY +
+        Math.round((overlayState.height || window.screen.availHeight) / 2)
+
+      appendClickPosition(centerX, centerY)
+    } catch (error) {
+      console.error("Unable to add centered click position", error)
+    }
+  }
+
+  function removeMostRecentClickPosition() {
+    setSettings((current) => {
+      if (current.clickPositions.length === 0) {
+        return current
+      }
+
+      const highestId = current.clickPositions.reduce(
+        (maxId, position) => Math.max(maxId, position.id),
+        0
+      )
+      const nextPositions = current.clickPositions.filter(
+        (position) => position.id !== highestId
+      )
+
+      return {
+        ...current,
+        clickPositionEnabled:
+          nextPositions.length > 0 ? current.clickPositionEnabled : false,
+        clickPositions: nextPositions,
+      }
+    })
+  }
+
+  function clearAllClickPositions() {
+    setSettings((current) => ({
+      ...current,
+      clickPositionEnabled: false,
+      clickPositions: [],
+    }))
+  }
+
   useEffect(() => {
     if (theme !== settings.theme) {
       setTheme(settings.theme)
@@ -229,6 +323,177 @@ export default function App() {
       window.clearTimeout(timeoutId)
     }
   }, [hasLoadedSettings, settings])
+
+  useEffect(() => {
+    if (!hasLoadedSettings) {
+      return
+    }
+
+    void syncClickPositionOverlay({
+      editable: false,
+      positions: settings.clickPositions,
+      visible:
+        settings.clickPositionDotsVisible && settings.clickPositions.length > 0,
+    }).catch((error) => {
+      console.error("Unable to sync click position overlay", error)
+    })
+  }, [
+    hasLoadedSettings,
+    settings.clickPositionDotsVisible,
+    settings.clickPositions,
+  ])
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return undefined
+    }
+
+    let cancelled = false
+    let dispose: (() => void) | undefined
+
+    void listen<ClickPositionOverlayMoveEvent>(
+      CLICK_POSITION_OVERLAY_MOVE_EVENT,
+      (event) => {
+        if (cancelled) {
+          return
+        }
+
+        setSettings((current) => ({
+          ...current,
+          clickPositions: current.clickPositions.map((position) =>
+            position.id === event.payload.id
+              ? {
+                  ...position,
+                  x: Math.round(event.payload.x),
+                  y: Math.round(event.payload.y),
+                }
+              : position
+          ),
+        }))
+      }
+    ).then((unlisten) => {
+      if (cancelled) {
+        unlisten()
+        return
+      }
+
+      dispose = unlisten
+    })
+
+    return () => {
+      cancelled = true
+      dispose?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasLoadedSettings) {
+      return undefined
+    }
+
+    if (!isTauri()) {
+      return undefined
+    }
+
+    const hotkeyCode = settings.clickPositionHotkey.code.trim()
+    if (hotkeyCode === "") {
+      return undefined
+    }
+
+    let cancelled = false
+    let pollTimeoutId: number | null = null
+    let lastPressed = false
+
+    async function addCursorDotFromGlobalHotkey() {
+      try {
+        const cursorPosition = await getCurrentCursorPosition()
+        if (cancelled) {
+          return
+        }
+
+        appendClickPosition(cursorPosition.x, cursorPosition.y)
+      } catch (error) {
+        console.error("Unable to add click position at cursor", error)
+      }
+    }
+
+    async function pollHotkeyState() {
+      try {
+        const activeElement = document.activeElement
+        const isCapturingDotHotkey =
+          activeElement instanceof HTMLElement &&
+          activeElement.hasAttribute("data-click-position-hotkey-capture")
+        const isPressed = isCapturingDotHotkey
+          ? false
+          : await readGlobalHotkeyState(hotkeyCode)
+
+        if (cancelled) {
+          return
+        }
+
+        if (isPressed && !lastPressed) {
+          lastPressed = true
+          void addCursorDotFromGlobalHotkey()
+        } else if (!isPressed) {
+          lastPressed = false
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Unable to poll global click-position hotkey", error)
+        }
+        lastPressed = false
+      } finally {
+        if (!cancelled) {
+          pollTimeoutId = window.setTimeout(() => {
+            void pollHotkeyState()
+          }, 25)
+        }
+      }
+    }
+
+    void pollHotkeyState()
+
+    return () => {
+      cancelled = true
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId)
+      }
+    }
+  }, [hasLoadedSettings, settings.clickPositionHotkey.code])
+
+  useEffect(() => {
+    const hotkeyCode = settings.clickPositionHotkey.code.trim()
+    if (hotkeyCode === "") {
+      return undefined
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isEditableElement(event.target)) {
+        return
+      }
+
+      const activeElement = document.activeElement
+      const isCapturingDotHotkey =
+        activeElement instanceof HTMLElement &&
+        activeElement.hasAttribute("data-click-position-hotkey-capture")
+      if (isCapturingDotHotkey) {
+        return
+      }
+
+      if (!matchesKeyboardEventHotkey(event, hotkeyCode)) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    window.addEventListener("keydown", handleKeyDown, true)
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true)
+    }
+  }, [settings.clickPositionHotkey.code])
 
   useEffect(() => {
     try {
@@ -319,6 +584,14 @@ export default function App() {
 
   const advancedPanels = (
     <div className="flex w-full max-w-[30rem] flex-col items-stretch gap-3">
+      <ClickPositionPanel
+        onAddCenteredDot={() => void addCenteredClickPosition()}
+        onClearDots={clearAllClickPositions}
+        onRemoveDot={removeMostRecentClickPosition}
+        onUnavailablePress={highlightDisabledDependency}
+        setSettings={setSettings}
+        settings={settings}
+      />
       <DoubleClickPanel
         onUnavailablePress={highlightDisabledDependency}
         setSettings={setSettings}

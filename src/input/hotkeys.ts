@@ -405,6 +405,42 @@ export function formatHotkeyLabel(code: string) {
   return parseHotkeyCode(code)?.label ?? UNBOUND_HOTKEY.label
 }
 
+export function matchesKeyboardEventHotkey(
+  event: KeyboardEvent,
+  hotkeyCode: string
+) {
+  if (event.metaKey) {
+    return false
+  }
+
+  const normalizedCode = normalizeHotkeyCode(hotkeyCode)
+  if (normalizedCode === "") {
+    return false
+  }
+
+  const parts = normalizedCode.split("+").filter(Boolean)
+  const expectedCtrl = parts.includes("Ctrl")
+  const expectedShift = parts.includes("Shift")
+  const expectedAlt = parts.includes("Alt")
+  const nonModifierParts = parts.filter((part) => !modifierHotkeyCodes.has(part))
+
+  if (nonModifierParts.length !== 1) {
+    return false
+  }
+
+  const pressedCode = hotkeyCaptureCodeFromKeyboardEvent(event)
+  if (!pressedCode || isModifierHotkeyCode(pressedCode)) {
+    return false
+  }
+
+  return (
+    event.ctrlKey === expectedCtrl &&
+    event.shiftKey === expectedShift &&
+    event.altKey === expectedAlt &&
+    pressedCode === nonModifierParts[0]
+  )
+}
+
 export function normalizeHotkey(hotkey: Hotkey | null | undefined) {
   if (!hotkey || hotkey.code.trim() === "") {
     return { ...UNBOUND_HOTKEY }

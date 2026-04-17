@@ -7,6 +7,11 @@ export type MouseButtonOption = "left" | "middle" | "right" | "mouse4" | "mouse5
 export type MouseActionOption = "click" | "hold"
 export type ClickEngine = "classic" | "throughput"
 export type AppTheme = "dark" | "light"
+export type ClickPosition = {
+  id: number
+  x: number
+  y: number
+}
 
 export type AutoClickerSettings = {
   theme: AppTheme
@@ -17,6 +22,10 @@ export type AutoClickerSettings = {
   hotkey: Hotkey
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  clickPositionEnabled: boolean
+  clickPositionDotsVisible: boolean
+  clickPositionHotkey: Hotkey
+  clickPositions: ClickPosition[]
   doubleClickEnabled: boolean
   doubleClickDelay: string
   clickDurationEnabled: boolean
@@ -35,6 +44,12 @@ export type SavedHotkey = {
   source?: string | null
 }
 
+export type SavedClickPosition = {
+  id?: number | null
+  x?: number | null
+  y?: number | null
+}
+
 export type SavedAutoClickerSettings = {
   theme?: string | null
   clickMode?: string | null
@@ -44,6 +59,10 @@ export type SavedAutoClickerSettings = {
   hotkey?: SavedHotkey | null
   mouseButton?: string | null
   mouseAction?: string | null
+  clickPositionEnabled?: boolean | null
+  clickPositionDotsVisible?: boolean | null
+  clickPositionHotkey?: SavedHotkey | null
+  clickPositions?: SavedClickPosition[] | null
   doubleClickEnabled?: boolean | null
   doubleClickDelay?: string | null
   clickDurationEnabled?: boolean | null
@@ -107,6 +126,10 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   hotkey: { ...UNBOUND_HOTKEY },
   mouseButton: "left",
   mouseAction: "click",
+  clickPositionEnabled: false,
+  clickPositionDotsVisible: true,
+  clickPositionHotkey: { ...UNBOUND_HOTKEY },
+  clickPositions: [],
   doubleClickEnabled: false,
   doubleClickDelay: "0",
   clickDurationEnabled: false,
@@ -139,6 +162,43 @@ function normalizeHotkeySource(value: string | null | undefined): Hotkey["source
   return "keyboard"
 }
 
+function normalizeClickPositions(
+  positions: SavedClickPosition[] | null | undefined
+): ClickPosition[] {
+  if (!Array.isArray(positions)) {
+    return []
+  }
+
+  const normalizedPositions: ClickPosition[] = []
+  const usedIds = new Set<number>()
+
+  for (const [index, position] of positions.entries()) {
+    const x = Number.isFinite(position?.x) ? Math.round(position!.x as number) : null
+    const y = Number.isFinite(position?.y) ? Math.round(position!.y as number) : null
+    if (x === null || y === null) {
+      continue
+    }
+
+    const preferredId =
+      typeof position?.id === "number" && Number.isFinite(position.id)
+        ? Math.max(1, Math.round(position.id))
+        : index + 1
+    let nextId = preferredId
+    while (usedIds.has(nextId)) {
+      nextId += 1
+    }
+
+    usedIds.add(nextId)
+    normalizedPositions.push({
+      id: nextId,
+      x,
+      y,
+    })
+  }
+
+  return normalizedPositions
+}
+
 export function getClickRateUnitsForMode(mode: ClickRateMode) {
   return mode === "every" ? clickRateEveryUnits : clickRatePerUnits
 }
@@ -167,6 +227,8 @@ export function normalizeAutoClickerSettings(
       : typeof settings?.clickDurationMin === "string"
         ? settings.clickDurationMin
         : resolvedLegacyClickDuration ?? defaultAutoClickerSettings.clickDurationMax
+  const clickPositionHotkey = settings?.clickPositionHotkey
+  const normalizedClickPositions = normalizeClickPositions(settings?.clickPositions)
 
   return {
     theme: resolveOption(
@@ -211,6 +273,30 @@ export function normalizeAutoClickerSettings(
       mouseActions,
       defaultAutoClickerSettings.mouseAction
     ),
+    clickPositionEnabled:
+      typeof settings?.clickPositionEnabled === "boolean"
+        ? settings.clickPositionEnabled
+        : defaultAutoClickerSettings.clickPositionEnabled,
+    clickPositionDotsVisible:
+      typeof settings?.clickPositionDotsVisible === "boolean"
+        ? settings.clickPositionDotsVisible
+        : defaultAutoClickerSettings.clickPositionDotsVisible,
+    clickPositionHotkey: normalizeHotkey(
+      clickPositionHotkey
+        ? {
+            code:
+              typeof clickPositionHotkey.code === "string"
+                ? clickPositionHotkey.code
+                : "",
+            label:
+              typeof clickPositionHotkey.label === "string"
+                ? clickPositionHotkey.label
+                : defaultAutoClickerSettings.clickPositionHotkey.label,
+            source: normalizeHotkeySource(clickPositionHotkey.source),
+          }
+        : defaultAutoClickerSettings.clickPositionHotkey
+    ),
+    clickPositions: normalizedClickPositions,
     doubleClickEnabled:
       typeof settings?.doubleClickEnabled === "boolean"
         ? settings.doubleClickEnabled

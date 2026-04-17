@@ -33,14 +33,14 @@ pub(crate) use hotkeys::read_pressed_keyboard_hotkey;
 #[cfg(target_os = "windows")]
 use clicker_calc::{
     click_cadence_from_config, dispatch_mouse_clicks, next_cadence_interval,
-    next_throughput_worker_sleep, next_worker_sleep, press_mouse_button,
+    move_cursor_to_position, next_throughput_worker_sleep, next_worker_sleep, press_mouse_button,
     release_mouse_button, wait_until_precise, ClickDurationRange,
     ClickDurationRng,
 };
 #[cfg(target_os = "windows")]
-use hotkeys::{
-    format_hotkey_label, normalize_hotkey_code, read_hotkey_state, validate_hotkey_code,
-};
+pub(crate) use hotkeys::read_hotkey_state;
+#[cfg(target_os = "windows")]
+use hotkeys::{format_hotkey_label, normalize_hotkey_code, validate_hotkey_code};
 
 const DEFAULT_CLICK_LIMIT: &str = "100";
 const MIN_CLICK_LIMIT: u64 = 1;
@@ -102,6 +102,14 @@ pub enum MouseAction {
     Hold,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClickPositionPoint {
+    pub id: u32,
+    pub x: i32,
+    pub y: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoClickerCommandConfig {
@@ -114,6 +122,8 @@ pub struct AutoClickerCommandConfig {
     pub interval_ms: u64,
     pub mouse_button: MouseButton,
     pub mouse_action: MouseAction,
+    pub click_position_enabled: bool,
+    pub click_positions: Vec<ClickPositionPoint>,
     pub double_click_enabled: bool,
     pub double_click_delay: String,
     pub click_duration_enabled: bool,
@@ -151,6 +161,8 @@ impl Default for AutoClickerCommandConfig {
             interval_ms: 40,
             mouse_button: MouseButton::Left,
             mouse_action: MouseAction::Click,
+            click_position_enabled: false,
+            click_positions: Vec::new(),
             double_click_enabled: false,
             double_click_delay: DEFAULT_DOUBLE_CLICK_DELAY.into(),
             click_duration_enabled: false,
@@ -319,6 +331,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
         let mut last_time_limit_tick: Option<Instant> = None;
         let mut cadence_carry_nanos = 0_u64;
         let mut click_duration_rng = ClickDurationRng::new();
+        let mut next_click_position_index = 0_usize;
         let mut last_schedule_config: Option<AutoClickerCommandConfig> = None;
         let mut next_click_at: Option<Instant> = None;
 
@@ -343,6 +356,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 remaining_click_limit = None;
                 remaining_time_limit = None;
                 last_time_limit_tick = None;
+                next_click_position_index = 0;
                 last_schedule_config = Some(config.clone());
                 next_click_at = None;
             }
@@ -419,18 +433,21 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     remaining_click_limit = click_limit;
                     remaining_time_limit = time_limit;
                     last_time_limit_tick = None;
+                    next_click_position_index = 0;
                 }
 
                 if config_changed && clicker_enabled {
                     remaining_click_limit = click_limit;
                     remaining_time_limit = time_limit;
                     last_time_limit_tick = None;
+                    next_click_position_index = 0;
                 }
 
                 if was_clicker_enabled && !clicker_enabled {
                     remaining_click_limit = None;
                     remaining_time_limit = None;
                     last_time_limit_tick = None;
+                    next_click_position_index = 0;
                 }
             }
 
@@ -544,20 +561,83 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         next_click_at = None;
                                         None
                                     } else {
-                                        let result = dispatch_mouse_clicks(
-                                            config.mouse_button,
-                                            click_count,
-                                            clicks_per_cycle,
-                                            double_click_delay,
-                                            click_duration_range,
-                                            &mut click_duration_rng,
-                                        );
-                                        if result.is_ok() {
+                                        let result = if click_positions_active_from_config(&config)
+                                        {
+                                            let mut executed_click_count = 0_usize;
+                                            let mut dispatch_error = None;
+
+                                            for _ in 0..due_cycles {
+                                                let cycle_click_count = remaining_click_limit
+                                                    .map(|remaining| {
+                                                        clicks_per_cycle.min(remaining as usize)
+                                                    })
+                                                    .unwrap_or(clicks_per_cycle);
+
+                                                if cycle_click_count == 0 {
+                                                    break;
+                                                }
+
+                                                if let Some(position) = next_click_position(
+                                                    &config,
+                                                    &mut next_click_position_index,
+                                                ) {
+                                                    if let Err(error) =
+                                                        move_cursor_to_position(position)
+                                                    {
+                                                        dispatch_error = Some(error);
+                                                        break;
+                                                    }
+                                                }
+
+                                                if let Err(error) = dispatch_mouse_clicks(
+                                                    config.mouse_button,
+                                                    cycle_click_count,
+                                                    clicks_per_cycle,
+                                                    double_click_delay,
+                                                    click_duration_range,
+                                                    &mut click_duration_rng,
+                                                ) {
+                                                    dispatch_error = Some(error);
+                                                    break;
+                                                }
+
+                                                executed_click_count += cycle_click_count;
+
+                                                if let Some(remaining) =
+                                                    remaining_click_limit.as_mut()
+                                                {
+                                                    *remaining = remaining
+                                                        .saturating_sub(cycle_click_count as u64);
+                                                    if *remaining == 0 {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
+                                            dispatch_error.map(Err).unwrap_or_else(|| {
+                                                Ok(executed_click_count)
+                                            })
+                                        } else {
+                                            dispatch_mouse_clicks(
+                                                config.mouse_button,
+                                                click_count,
+                                                clicks_per_cycle,
+                                                double_click_delay,
+                                                click_duration_range,
+                                                &mut click_duration_rng,
+                                            )
+                                            .map(|_| click_count)
+                                        };
+
+                                        if let Ok(executed_click_count) = result {
                                             if let Some(remaining) =
                                                 remaining_click_limit.as_mut()
                                             {
-                                                *remaining =
-                                                    remaining.saturating_sub(click_count as u64);
+                                                if !click_positions_active_from_config(&config) {
+                                                    *remaining = remaining
+                                                        .saturating_sub(executed_click_count as u64);
+                                                }
+
                                                 if *remaining == 0 {
                                                     clicker_enabled = false;
                                                     limit_locked_until_release = true;
@@ -763,6 +843,27 @@ fn clicks_per_cycle_from_config(config: &AutoClickerCommandConfig) -> usize {
     } else {
         1
     }
+}
+
+#[cfg(target_os = "windows")]
+fn click_positions_active_from_config(config: &AutoClickerCommandConfig) -> bool {
+    config.click_position_enabled
+        && matches!(config.mouse_action, MouseAction::Click)
+        && !config.click_positions.is_empty()
+}
+
+#[cfg(target_os = "windows")]
+fn next_click_position(
+    config: &AutoClickerCommandConfig,
+    next_click_position_index: &mut usize,
+) -> Option<ClickPositionPoint> {
+    if config.click_positions.is_empty() {
+        return None;
+    }
+
+    let position = config.click_positions[*next_click_position_index % config.click_positions.len()];
+    *next_click_position_index = (*next_click_position_index + 1) % config.click_positions.len();
+    Some(position)
 }
 
 #[cfg(target_os = "windows")]
