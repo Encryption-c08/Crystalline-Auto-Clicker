@@ -94,45 +94,54 @@ export function TimeLimitPanel({
   const inputGroup = (
     <div
       className={cn(
-        "flex h-8 min-w-0 items-stretch overflow-visible rounded-lg border transition-colors",
-        isTimeLimitActive
-          ? "border-border/70 bg-background/65"
-          : "border-border/60 bg-background/30 opacity-70"
+        "flex h-8 min-w-0 items-stretch overflow-visible transition-colors",
+        !isTimeLimitActive && "opacity-70"
       )}
     >
-      <Input
-        aria-label="Time limit value"
-        className="h-full w-20 rounded-none border-0 bg-transparent px-3 text-center text-base font-semibold shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-base"
-        disabled={!isTimeLimitActive}
-        inputMode="numeric"
-        onBlur={() =>
-          setSettings((current) => ({
-            ...current,
-            timeLimit: finalizeTimeLimit(current.timeLimit),
-          }))
-        }
-        onChange={(event) =>
-          setSettings((current) => ({
-            ...current,
-            timeLimit: normalizeTimeLimitInput(event.target.value),
-          }))
-        }
-        type="text"
-        value={timeLimit}
-      />
+      <div
+        className={cn(
+          "flex items-stretch rounded-l-lg border border-r-0 transition-colors",
+          isTimeLimitActive
+            ? "border-border/70 bg-background/65"
+            : "border-border/60 bg-background/30"
+        )}
+      >
+        <Input
+          aria-label="Time limit value"
+          className="h-full w-20 rounded-none border-0 bg-transparent px-3 text-center text-base font-semibold shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-base"
+          disabled={!isTimeLimitActive}
+          inputMode="numeric"
+          onBlur={() =>
+            setSettings((current) => ({
+              ...current,
+              timeLimit: finalizeTimeLimit(current.timeLimit),
+            }))
+          }
+          onChange={(event) =>
+            setSettings((current) => ({
+              ...current,
+              timeLimit: normalizeTimeLimitInput(event.target.value),
+            }))
+          }
+          type="text"
+          value={timeLimit}
+        />
+      </div>
 
-      <div className="relative" ref={timeLimitUnitRef}>
+      <div className="relative w-32 shrink-0" ref={timeLimitUnitRef}>
         <button
           aria-expanded={isTimeLimitUnitOpen}
           aria-haspopup="listbox"
           className={cn(
-            "flex h-full min-w-[7.5rem] items-center justify-between gap-2 border-l border-border/70 px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-0",
+            "flex h-full w-full items-center justify-between gap-2 border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-0",
             isTimeLimitActive
               ? cn(
-                  "text-muted-foreground hover:bg-background/55",
-                  isTimeLimitUnitOpen && "rounded-tr-lg bg-background/80"
+                "border-border/70 bg-background/65 text-muted-foreground hover:bg-background/55",
+                isTimeLimitUnitOpen
+                  ? "rounded-tr-lg rounded-br-none bg-background/80"
+                  : "rounded-r-lg"
                 )
-              : "cursor-not-allowed text-muted-foreground/80"
+              : "cursor-not-allowed rounded-r-lg border-border/60 bg-background/30 text-muted-foreground/80"
           )}
           disabled={!isTimeLimitActive}
           onClick={() => setIsTimeLimitUnitOpen((current) => !current)}
@@ -149,7 +158,7 @@ export function TimeLimitPanel({
 
         {isTimeLimitUnitOpen ? (
           <div
-            className="absolute top-full left-0 z-20 -mt-px min-w-full overflow-hidden rounded-b-lg border border-border border-t-0 bg-background/95"
+            className="absolute top-full left-0 z-20 -mt-px w-full overflow-hidden rounded-b-lg border border-border border-t-0 bg-background/95"
             role="listbox"
           >
             <div className="p-1">
