@@ -10,7 +10,7 @@ Crystalline Auto Clicker is a desktop auto clicker built to feel fast, clean, an
 
 ## Why This Exists
 
-Crystalline Auto Clicker started after I came across Blur Auto Clicker. I liked the idea and originally wanted to contribute to that project, but development was moving more slowly than I hoped and some of the features I saw as essential were not there yet. The biggest missing piece for me was macro support, along with the kind of deeper automation that would make the app more useful long term.
+Crystalline Auto Clicker started after I came across [Blur Auto Clicker](https://github.com/Blur009/Blur-AutoClicker). I liked the idea and originally wanted to contribute to that project, but development was moving more slowly than I hoped and some of the features I saw as essential were not there yet. The biggest missing piece for me was macro support, along with the kind of deeper automation that would make the app more useful long term.
 
 Instead of waiting around, I decided to build my own alternative with a similar feel but a more ambitious direction. The goal is to give people another serious option, push the feature set further, and prove an auto clicker does not have to be disposable, outdated, or stripped down to the bare minimum.
 
