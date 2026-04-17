@@ -71,6 +71,7 @@ struct PersistedHotkey {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedAutoClickerSettings {
+    theme: Option<String>,
     click_mode: Option<String>,
     click_rate: Option<String>,
     click_rate_mode: Option<String>,
@@ -78,6 +79,8 @@ struct PersistedAutoClickerSettings {
     hotkey: Option<PersistedHotkey>,
     mouse_button: Option<String>,
     mouse_action: Option<String>,
+    double_click_enabled: Option<bool>,
+    double_click_delay: Option<String>,
     click_duration_enabled: Option<bool>,
     click_duration_min: Option<String>,
     click_duration_max: Option<String>,

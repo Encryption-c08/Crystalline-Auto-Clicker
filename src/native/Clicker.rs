@@ -45,6 +45,8 @@ use hotkeys::{
 const DEFAULT_CLICK_LIMIT: &str = "100";
 const MIN_CLICK_LIMIT: u64 = 1;
 const MAX_CLICK_LIMIT: u64 = 1_000_000;
+const DEFAULT_DOUBLE_CLICK_DELAY: &str = "0";
+const MIN_DOUBLE_CLICK_DELAY: u64 = 0;
 const DEFAULT_CLICK_DURATION_MAX: &str = "1";
 const DEFAULT_CLICK_DURATION_MIN: &str = "1";
 const MIN_CLICK_DURATION: u64 = 1;
@@ -112,6 +114,8 @@ pub struct AutoClickerCommandConfig {
     pub interval_ms: u64,
     pub mouse_button: MouseButton,
     pub mouse_action: MouseAction,
+    pub double_click_enabled: bool,
+    pub double_click_delay: String,
     pub click_duration_enabled: bool,
     pub click_duration_min: String,
     pub click_duration_max: String,
@@ -147,6 +151,8 @@ impl Default for AutoClickerCommandConfig {
             interval_ms: 40,
             mouse_button: MouseButton::Left,
             mouse_action: MouseAction::Click,
+            double_click_enabled: false,
+            double_click_delay: DEFAULT_DOUBLE_CLICK_DELAY.into(),
             click_duration_enabled: false,
             click_duration_min: DEFAULT_CLICK_DURATION_MIN.into(),
             click_duration_max: DEFAULT_CLICK_DURATION_MAX.into(),
@@ -346,6 +352,13 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 MouseAction::Hold => Ok(None),
             };
             let cadence = cadence_result.as_ref().ok().copied().flatten();
+            let clicks_per_cycle = clicks_per_cycle_from_config(&config);
+            let double_click_delay_result = double_click_delay_from_config(&config);
+            let double_click_delay = double_click_delay_result
+                .as_ref()
+                .ok()
+                .copied()
+                .flatten();
             let click_duration_range_result = click_duration_range_from_config(&config);
             let click_duration_range = click_duration_range_result
                 .as_ref()
@@ -356,7 +369,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             let click_limit = click_limit_result.as_ref().ok().and_then(|limit| *limit);
             let time_limit_result = time_limit_from_config(&config);
             let time_limit = time_limit_result.as_ref().ok().copied().flatten();
-            let hotkey_result = read_hotkey_state(&config.hotkey_code);
+            let hotkey_result = read_hotkey_state(&config.hotkey_code, config.click_mode);
             let hotkey_pressed = hotkey_result
                 .as_ref()
                 .map(|pressed| *pressed)
@@ -369,6 +382,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
             if hotkey_result.is_err()
                 || cadence_result.is_err()
+                || double_click_delay_result.is_err()
                 || click_duration_range_result.is_err()
                 || click_limit_result.is_err()
                 || time_limit_result.is_err()
@@ -425,8 +439,16 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .as_ref()
                 .map(|active| *active)
                 .unwrap_or(false);
+            let hotkey_uses_output_mouse_button =
+                hotkey_includes_mouse_button(&config.hotkey_code, config.mouse_button);
+            let waiting_for_hotkey_release = clicker_enabled
+                && hotkey_pressed
+                && hotkey_uses_output_mouse_button
+                && matches!(config.click_mode, ClickMode::Toggle);
+            let can_dispatch_clicks =
+                clicker_enabled && !paused_for_app_window && !waiting_for_hotkey_release;
 
-            let time_limit_expired = if clicker_enabled && !paused_for_app_window {
+            let time_limit_expired = if can_dispatch_clicks {
                 if let Some(remaining_time_limit) = remaining_time_limit.as_mut() {
                     let now = Instant::now();
                     if let Some(last_tick) = last_time_limit_tick.replace(now) {
@@ -458,7 +480,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 next_click_at = None;
             }
 
-            let click_result = if clicker_enabled && !paused_for_app_window {
+            let click_result = if can_dispatch_clicks {
                 match config.mouse_action {
                     MouseAction::Click => {
                         if let Err(error) =
@@ -493,22 +515,24 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
                                 let now_after_wait = Instant::now();
                                 if now_after_wait >= scheduled_at {
-                                    let mut due_clicks = 0_usize;
+                                    let mut due_cycles = 0_usize;
                                     let mut next_scheduled_at = scheduled_at;
 
                                     while next_scheduled_at <= now_after_wait
-                                        && due_clicks < MAX_CATCH_UP_CLICKS_PER_LOOP
+                                        && due_cycles < MAX_CATCH_UP_CLICKS_PER_LOOP
                                     {
-                                        due_clicks += 1;
+                                        due_cycles += 1;
                                         next_scheduled_at += next_cadence_interval(
                                             cadence,
                                             &mut cadence_carry_nanos,
                                         );
                                     }
 
+                                    let requested_click_count =
+                                        due_cycles.saturating_mul(clicks_per_cycle);
                                     let click_count = remaining_click_limit
-                                        .map(|remaining| due_clicks.min(remaining as usize))
-                                        .unwrap_or(due_clicks);
+                                        .map(|remaining| requested_click_count.min(remaining as usize))
+                                        .unwrap_or(requested_click_count);
 
                                     if click_count == 0 {
                                         clicker_enabled = false;
@@ -523,6 +547,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         let result = dispatch_mouse_clicks(
                                             config.mouse_button,
                                             click_count,
+                                            clicks_per_cycle,
+                                            double_click_delay,
                                             click_duration_range,
                                             &mut click_duration_rng,
                                         );
@@ -611,11 +637,12 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 status.click_mode = config.click_mode;
                 status.hotkey_label = config.hotkey_label.clone();
                 status.hotkey_pressed = hotkey_pressed;
-                status.clicker_active = clicker_enabled && !paused_for_app_window;
+                status.clicker_active = can_dispatch_clicks;
                 status.interval_ms = config.interval_ms.max(1);
                 status.last_error = hotkey_result
                     .err()
                     .or_else(|| cadence_result.err())
+                    .or_else(|| double_click_delay_result.err())
                     .or_else(|| click_duration_range_result.err())
                     .or_else(|| click_limit_result.err())
                     .or_else(|| time_limit_result.err())
@@ -623,8 +650,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     .or(click_result);
             }
 
-            let sleep_for = if clicker_enabled
-                && !paused_for_app_window
+            let sleep_for = if can_dispatch_clicks
                 && matches!(config.mouse_action, MouseAction::Click)
             {
                 next_click_at
@@ -640,7 +666,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             if !sleep_for.is_zero() {
                 thread::sleep(sleep_for);
             } else if clicker_enabled
-                && !paused_for_app_window
+                && can_dispatch_clicks
                 && matches!(config.click_engine, ClickEngine::Classic)
                 && matches!(config.mouse_action, MouseAction::Click)
             {
@@ -699,6 +725,7 @@ fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(),
         click_cadence_from_config(config)?;
     }
 
+    double_click_delay_from_config(config)?;
     click_duration_range_from_config(config)?;
     click_limit_from_config(config)?;
     time_limit_from_config(config)?;
@@ -712,6 +739,9 @@ fn normalize_auto_clicker_config(
 ) -> Result<AutoClickerCommandConfig, String> {
     config.hotkey_code = normalize_hotkey_code(&config.hotkey_code)?;
     config.hotkey_label = format_hotkey_label(&config.hotkey_code)?;
+    if config.double_click_enabled && matches!(config.mouse_action, MouseAction::Click) {
+        config.double_click_delay = normalize_double_click_delay_value(&config.double_click_delay)?;
+    }
     if config.click_duration_enabled && matches!(config.mouse_action, MouseAction::Click) {
         let (normalized_min, normalized_max) = normalize_click_duration_range_values(
             &config.click_duration_min,
@@ -724,6 +754,55 @@ fn normalize_auto_clicker_config(
     config.time_limit = normalize_time_limit_value(&config.time_limit)?;
     validate_auto_clicker_config(&config)?;
     Ok(config)
+}
+
+#[cfg(target_os = "windows")]
+fn clicks_per_cycle_from_config(config: &AutoClickerCommandConfig) -> usize {
+    if config.double_click_enabled && matches!(config.mouse_action, MouseAction::Click) {
+        2
+    } else {
+        1
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn double_click_delay_from_config(
+    config: &AutoClickerCommandConfig,
+) -> Result<Option<Duration>, String> {
+    if !config.double_click_enabled || !matches!(config.mouse_action, MouseAction::Click) {
+        return Ok(None);
+    }
+
+    Ok(Some(Duration::from_millis(parse_double_click_delay_value(
+        &config.double_click_delay,
+    )?)))
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_double_click_delay_value(value: &str) -> Result<String, String> {
+    Ok(parse_double_click_delay_value(value)?.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn parse_double_click_delay_value(value: &str) -> Result<u64, String> {
+    let trimmed_value = value.trim();
+    let normalized_value = if trimmed_value.is_empty() {
+        DEFAULT_DOUBLE_CLICK_DELAY
+    } else {
+        trimmed_value
+    };
+
+    let double_click_delay = normalized_value
+        .parse::<u64>()
+        .map_err(|_| "Double click delay must be a whole number.".to_string())?;
+
+    if double_click_delay < MIN_DOUBLE_CLICK_DELAY {
+        return Err(format!(
+            "Double click delay must be at least {MIN_DOUBLE_CLICK_DELAY} ms."
+        ));
+    }
+
+    Ok(double_click_delay)
 }
 
 #[cfg(target_os = "windows")]
@@ -878,6 +957,26 @@ fn time_limit_unit_ms(unit: ClickRateUnit) -> u64 {
         ClickRateUnit::M => 60_000,
         ClickRateUnit::H => 3_600_000,
         ClickRateUnit::D => 86_400_000,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn hotkey_includes_mouse_button(code: &str, mouse_button: MouseButton) -> bool {
+    let target_code = mouse_button_hotkey_code(mouse_button);
+
+    code.split('+')
+        .map(str::trim)
+        .any(|part| part.eq_ignore_ascii_case(target_code))
+}
+
+#[cfg(target_os = "windows")]
+fn mouse_button_hotkey_code(mouse_button: MouseButton) -> &'static str {
+    match mouse_button {
+        MouseButton::Left => "Mouse1",
+        MouseButton::Right => "Mouse2",
+        MouseButton::Middle => "Mouse3",
+        MouseButton::Mouse4 => "Mouse4",
+        MouseButton::Mouse5 => "Mouse5",
     }
 }
 

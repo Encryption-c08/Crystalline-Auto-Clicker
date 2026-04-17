@@ -26,8 +26,10 @@ import type {
 import type { SettingsPanelLayout } from "@/components/settings-panel"
 import { finalizeClickRate, normalizeClickRateInput } from "@/config/runtime"
 import {
-  formatKeyboardHotkey,
-  formatMouseHotkey,
+  buildHotkeyFromCaptureCodes,
+  hotkeyCaptureCodeFromKeyboardEvent,
+  hotkeyCaptureCodeFromMouseButton,
+  isModifierHotkeyCode,
   UNBOUND_HOTKEY,
 } from "@/input/hotkeys"
 import { readPressedKeyboardHotkey } from "@/lib/hotkey-capture"
@@ -49,6 +51,7 @@ function TinyLabel({ children }: { children: string }) {
 type SettingsPanelContentProps = {
   disabledDependencyCue: DisabledDependencyCue | null
   layout?: SettingsPanelLayout
+  onDisabledDependencyCueConsumed?: () => void
   settings: AutoClickerSettings
   setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
   runtimeError: string | null
@@ -57,6 +60,7 @@ type SettingsPanelContentProps = {
 export function SettingsPanelContent({
   disabledDependencyCue,
   layout = "default",
+  onDisabledDependencyCueConsumed,
   settings,
   setSettings,
   runtimeError,
@@ -65,10 +69,15 @@ export function SettingsPanelContent({
   const rateId = useId()
   const rateUnitId = useId()
   const ignoreNextHotkeyTriggerClickRef = useRef(false)
+  const hotkeyTriggerIgnoreTimeoutRef = useRef<number | null>(null)
+  const hotkeyCaptureUsedMouseRef = useRef(false)
+  const hotkeyCaptureUsedKeyboardRef = useRef(false)
   const rateUnitDropdownRef = useRef<HTMLDivElement | null>(null)
 
   const [isCapturingHotkey, setIsCapturingHotkey] = useState(false)
   const [isRateUnitDropdownOpen, setIsRateUnitDropdownOpen] = useState(false)
+  const [queuedDependencyCue, setQueuedDependencyCue] =
+    useState<DisabledDependencyCue | null>(null)
   const [activeDependencyHighlight, setActiveDependencyHighlight] = useState<{
     flashOn: boolean
     target: DisabledDependencyTarget
@@ -87,12 +96,41 @@ export function SettingsPanelContent({
   const rateUnits = getClickRateUnitsForMode(clickRateMode)
   const clickRatePhrase =
     clickRateMode === "every" ? "Every" : "Clicks per"
+  const isHotkeyUnbound = hotkey.code === ""
+  const hotkeyTriggerClassName = cn(
+    "justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0",
+    isHotkeyUnbound &&
+      !isCapturingHotkey &&
+      "text-muted-foreground/85",
+    isCapturingHotkey &&
+      "border-white/60 bg-white/10 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.18),0_0_22px_rgba(255,255,255,0.11)]"
+  )
   const isActionHoldHighlighted =
     activeDependencyHighlight?.target === "mouse-action-hold" &&
     activeDependencyHighlight.flashOn
   const isClickModeHoldHighlighted =
     activeDependencyHighlight?.target === "click-mode-hold" &&
     activeDependencyHighlight.flashOn
+  const dependencyHighlightClassName =
+    "!bg-zinc-950 !text-white shadow-[0_0_0_1px_rgba(24,24,27,0.95),0_0_18px_rgba(24,24,27,0.2)] dark:!bg-white dark:!text-zinc-950 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+
+  function clearHotkeyTriggerClickIgnore() {
+    ignoreNextHotkeyTriggerClickRef.current = false
+
+    if (hotkeyTriggerIgnoreTimeoutRef.current !== null) {
+      window.clearTimeout(hotkeyTriggerIgnoreTimeoutRef.current)
+      hotkeyTriggerIgnoreTimeoutRef.current = null
+    }
+  }
+
+  function armHotkeyTriggerClickIgnore() {
+    clearHotkeyTriggerClickIgnore()
+    ignoreNextHotkeyTriggerClickRef.current = true
+    hotkeyTriggerIgnoreTimeoutRef.current = window.setTimeout(() => {
+      ignoreNextHotkeyTriggerClickRef.current = false
+      hotkeyTriggerIgnoreTimeoutRef.current = null
+    }, 250)
+  }
 
   function cycleMouseButton() {
     setSettings((current) => {
@@ -138,12 +176,102 @@ export function SettingsPanelContent({
     })
   }
 
+  function renderHotkeyTriggerContent() {
+    if (isCapturingHotkey) {
+      return (
+        <span className="flex items-center gap-2 font-medium">
+          <span
+            aria-hidden="true"
+            className="size-2 rounded-full bg-white/95 shadow-[0_0_10px_rgba(255,255,255,0.55)] animate-pulse"
+          />
+          <span>Listening...</span>
+        </span>
+      )
+    }
+
+    if (isHotkeyUnbound) {
+      return "Press any key"
+    }
+
+    return hotkey.label
+  }
+
+  useEffect(() => {
+    return () => {
+      clearHotkeyTriggerClickIgnore()
+    }
+  }, [])
+
   useEffect(() => {
     if (!isCapturingHotkey) {
       return undefined
     }
 
-    let pendingMouseHotkey: AutoClickerSettings["hotkey"] | null = null
+    hotkeyCaptureUsedMouseRef.current = false
+    hotkeyCaptureUsedKeyboardRef.current = false
+
+    let pendingHotkey: AutoClickerSettings["hotkey"] | null = null
+    let capturedHotkeyCodes: string[] = []
+    let pressedKeyboardCodes: string[] = []
+    let pressedMouseButtons: number[] = []
+
+    function rememberPressedKeyboardCode(code: string) {
+      if (pressedKeyboardCodes.includes(code)) {
+        return
+      }
+
+      pressedKeyboardCodes = [...pressedKeyboardCodes, code]
+    }
+
+    function forgetPressedKeyboardCode(code: string) {
+      pressedKeyboardCodes = pressedKeyboardCodes.filter(
+        (pressedCode) => pressedCode !== code
+      )
+    }
+
+    function rememberCapturedHotkeyCode(code: string) {
+      if (capturedHotkeyCodes.includes(code)) {
+        return
+      }
+
+      capturedHotkeyCodes = [...capturedHotkeyCodes, code]
+    }
+
+    function rememberPressedMouseButton(button: number) {
+      if (pressedMouseButtons.includes(button)) {
+        return
+      }
+
+      pressedMouseButtons = [...pressedMouseButtons, button]
+    }
+
+    function forgetPressedMouseButton(button: number) {
+      pressedMouseButtons = pressedMouseButtons.filter(
+        (pressedButton) => pressedButton !== button
+      )
+    }
+
+    function updatePendingHotkey(nextHotkey: AutoClickerSettings["hotkey"] | null) {
+      if (nextHotkey) {
+        pendingHotkey = nextHotkey
+      }
+    }
+
+    function finalizePendingHotkeyIfIdle() {
+      if (!pendingHotkey) {
+        return
+      }
+
+      const hasActiveNonModifierKeyboardKey = pressedKeyboardCodes.some(
+        (code) => !isModifierHotkeyCode(code)
+      )
+      if (hasActiveNonModifierKeyboardKey || pressedMouseButtons.length > 0) {
+        return
+      }
+
+      setSettings((current) => ({ ...current, hotkey: pendingHotkey! }))
+      setIsCapturingHotkey(false)
+    }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -157,26 +285,36 @@ export function SettingsPanelContent({
         return
       }
 
-      if (
-        event.key === "Shift" ||
-        event.key === "Control" ||
-        event.key === "Alt" ||
-        event.key === "Meta"
-      ) {
+      const captureCode = hotkeyCaptureCodeFromKeyboardEvent(event)
+      if (!captureCode) {
         event.preventDefault()
         event.stopPropagation()
         return
       }
 
-      const nextHotkey = formatKeyboardHotkey(event)
-      if (!nextHotkey) {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (!isModifierHotkeyCode(captureCode)) {
+        hotkeyCaptureUsedKeyboardRef.current = true
+      }
+
+      rememberPressedKeyboardCode(captureCode)
+      rememberCapturedHotkeyCode(captureCode)
+      updatePendingHotkey(buildHotkeyFromCaptureCodes(capturedHotkeyCodes))
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      const captureCode = hotkeyCaptureCodeFromKeyboardEvent(event)
+      if (!captureCode) {
         return
       }
 
       event.preventDefault()
       event.stopPropagation()
-      setSettings((current) => ({ ...current, hotkey: nextHotkey }))
-      setIsCapturingHotkey(false)
+
+      forgetPressedKeyboardCode(captureCode)
+      finalizePendingHotkeyIfIdle()
     }
 
     function handleMouseDown(event: MouseEvent) {
@@ -184,17 +322,21 @@ export function SettingsPanelContent({
         event.target instanceof Element &&
         event.target.closest("[data-hotkey-trigger]")
       ) {
-        ignoreNextHotkeyTriggerClickRef.current = true
+        armHotkeyTriggerClickIgnore()
       }
 
-      const nextHotkey = formatMouseHotkey(event)
-      if (!nextHotkey) {
-        return
-      }
+      hotkeyCaptureUsedMouseRef.current = true
+      rememberPressedMouseButton(event.button)
 
       event.preventDefault()
       event.stopPropagation()
-      pendingMouseHotkey = nextHotkey
+
+      const captureCode = hotkeyCaptureCodeFromMouseButton(event.button)
+      if (captureCode) {
+        rememberCapturedHotkeyCode(captureCode)
+      }
+
+      updatePendingHotkey(buildHotkeyFromCaptureCodes(capturedHotkeyCodes))
     }
 
     function handleMouseUp(event: MouseEvent) {
@@ -202,22 +344,15 @@ export function SettingsPanelContent({
         event.target instanceof Element &&
         event.target.closest("[data-hotkey-trigger]")
       ) {
-        ignoreNextHotkeyTriggerClickRef.current = true
-      }
-
-      if (!pendingMouseHotkey) {
-        return
+        armHotkeyTriggerClickIgnore()
       }
 
       event.preventDefault()
       event.stopPropagation()
 
-      if (event.buttons !== 0) {
-        return
-      }
-
-      setSettings((current) => ({ ...current, hotkey: pendingMouseHotkey! }))
-      setIsCapturingHotkey(false)
+      hotkeyCaptureUsedMouseRef.current = true
+      forgetPressedMouseButton(event.button)
+      finalizePendingHotkeyIfIdle()
     }
 
     function handleContextMenu(event: MouseEvent) {
@@ -230,20 +365,48 @@ export function SettingsPanelContent({
       event.stopPropagation()
     }
 
+    function handleWheel(event: WheelEvent) {
+      hotkeyCaptureUsedMouseRef.current = true
+      const wheelCaptureCode =
+        event.deltaY < 0 ? "WheelUp" : event.deltaY > 0 ? "WheelDown" : null
+      if (wheelCaptureCode) {
+        rememberCapturedHotkeyCode(wheelCaptureCode)
+      }
+
+      const nextHotkey = buildHotkeyFromCaptureCodes(capturedHotkeyCodes)
+      if (!nextHotkey) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      setSettings((current) => ({ ...current, hotkey: nextHotkey }))
+      setIsCapturingHotkey(false)
+    }
+
     window.addEventListener("keydown", handleKeyDown, true)
+    window.addEventListener("keyup", handleKeyUp, true)
     window.addEventListener("mousedown", handleMouseDown, true)
     window.addEventListener("mouseup", handleMouseUp, true)
     window.addEventListener("click", handleMouseClick, true)
     window.addEventListener("auxclick", handleMouseClick, true)
     window.addEventListener("contextmenu", handleContextMenu, true)
+    window.addEventListener("wheel", handleWheel, {
+      capture: true,
+      passive: false,
+    })
 
     return () => {
+      hotkeyCaptureUsedMouseRef.current = false
+      hotkeyCaptureUsedKeyboardRef.current = false
       window.removeEventListener("keydown", handleKeyDown, true)
+      window.removeEventListener("keyup", handleKeyUp, true)
       window.removeEventListener("mousedown", handleMouseDown, true)
       window.removeEventListener("mouseup", handleMouseUp, true)
       window.removeEventListener("click", handleMouseClick, true)
       window.removeEventListener("auxclick", handleMouseClick, true)
       window.removeEventListener("contextmenu", handleContextMenu, true)
+      window.removeEventListener("wheel", handleWheel, true)
     }
   }, [isCapturingHotkey, setSettings])
 
@@ -257,7 +420,13 @@ export function SettingsPanelContent({
     let pollInFlight = false
 
     async function pollPressedKeyboardHotkey() {
-      if (cancelled || pollInFlight) {
+      if (
+        cancelled ||
+        pollInFlight ||
+        hotkeyCaptureUsedMouseRef.current ||
+        hotkeyCaptureUsedKeyboardRef.current
+      ) {
+        pendingNativeHotkey = null
         return
       }
 
@@ -307,12 +476,21 @@ export function SettingsPanelContent({
       return undefined
     }
 
+    setQueuedDependencyCue(disabledDependencyCue)
+    onDisabledDependencyCueConsumed?.()
+  }, [disabledDependencyCue, onDisabledDependencyCueConsumed])
+
+  useEffect(() => {
+    if (!queuedDependencyCue) {
+      return undefined
+    }
+
     let flashOn = true
     let completedFlashes = 0
 
     setActiveDependencyHighlight({
       flashOn: true,
-      target: disabledDependencyCue.target,
+      target: queuedDependencyCue.target,
     })
 
     const intervalId = window.setInterval(() => {
@@ -327,20 +505,21 @@ export function SettingsPanelContent({
       flashOn = !flashOn
       setActiveDependencyHighlight({
         flashOn,
-        target: disabledDependencyCue.target,
+        target: queuedDependencyCue.target,
       })
     }, 260)
 
     const timeoutId = window.setTimeout(() => {
       window.clearInterval(intervalId)
       setActiveDependencyHighlight(null)
+      setQueuedDependencyCue(null)
     }, 3_200)
 
     return () => {
       window.clearInterval(intervalId)
       window.clearTimeout(timeoutId)
     }
-  }, [disabledDependencyCue])
+  }, [queuedDependencyCue])
 
   useEffect(() => {
     if (!isRateUnitDropdownOpen) {
@@ -441,12 +620,12 @@ export function SettingsPanelContent({
           <div className="flex items-center gap-2">
             <TinyLabel>Hotkey</TinyLabel>
             <Button
-              className="h-8 w-[9rem] justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0"
+              className={cn("h-8 w-[9rem]", hotkeyTriggerClassName)}
               data-hotkey-trigger
               id={hotkeyId}
               onClick={() => {
                 if (ignoreNextHotkeyTriggerClickRef.current) {
-                  ignoreNextHotkeyTriggerClickRef.current = false
+                  clearHotkeyTriggerClickIgnore()
                   return
                 }
 
@@ -456,9 +635,7 @@ export function SettingsPanelContent({
               type="button"
               variant="outline"
             >
-              {isCapturingHotkey || hotkey.code === ""
-                ? "Press any key"
-                : hotkey.label}
+              {renderHotkeyTriggerContent()}
             </Button>
           </div>
         </div>
@@ -488,7 +665,7 @@ export function SettingsPanelContent({
                     "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                     value === "hold" &&
                       isActionHoldHighlighted &&
-                      "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                      dependencyHighlightClassName
                   )}
                   key={value}
                   value={value}
@@ -537,7 +714,7 @@ export function SettingsPanelContent({
                     "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                     value === "hold" &&
                       isClickModeHoldHighlighted &&
-                      "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                      dependencyHighlightClassName
                   )}
                   key={value}
                   value={value}
@@ -691,12 +868,12 @@ export function SettingsPanelContent({
             <TinyLabel>Hotkey</TinyLabel>
           </div>
           <Button
-            className="h-8 w-[14rem] max-w-full justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0"
+            className={cn("h-8 w-[14rem] max-w-full", hotkeyTriggerClassName)}
             data-hotkey-trigger
             id={hotkeyId}
             onClick={() => {
               if (ignoreNextHotkeyTriggerClickRef.current) {
-                ignoreNextHotkeyTriggerClickRef.current = false
+                clearHotkeyTriggerClickIgnore()
                 return
               }
 
@@ -706,9 +883,7 @@ export function SettingsPanelContent({
             type="button"
             variant="outline"
           >
-            {isCapturingHotkey || hotkey.code === ""
-              ? "Press any key"
-              : hotkey.label}
+            {renderHotkeyTriggerContent()}
           </Button>
         </div>
 
@@ -736,7 +911,7 @@ export function SettingsPanelContent({
                   "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                   value === "hold" &&
                     isClickModeHoldHighlighted &&
-                    "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                    dependencyHighlightClassName
                 )}
                 key={value}
                 value={value}
@@ -773,7 +948,7 @@ export function SettingsPanelContent({
                   "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                   value === "hold" &&
                     isActionHoldHighlighted &&
-                    "!bg-white !text-zinc-950 shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+                    dependencyHighlightClassName
                 )}
                 key={value}
                 value={value}

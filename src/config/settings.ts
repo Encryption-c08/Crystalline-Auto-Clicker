@@ -6,8 +6,10 @@ export type ClickMode = "toggle" | "hold"
 export type MouseButtonOption = "left" | "middle" | "right" | "mouse4" | "mouse5"
 export type MouseActionOption = "click" | "hold"
 export type ClickEngine = "classic" | "throughput"
+export type AppTheme = "dark" | "light"
 
 export type AutoClickerSettings = {
+  theme: AppTheme
   clickMode: ClickMode
   clickRate: string
   clickRateMode: ClickRateMode
@@ -15,6 +17,8 @@ export type AutoClickerSettings = {
   hotkey: Hotkey
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  doubleClickEnabled: boolean
+  doubleClickDelay: string
   clickDurationEnabled: boolean
   clickDurationMin: string
   clickDurationMax: string
@@ -32,6 +36,7 @@ export type SavedHotkey = {
 }
 
 export type SavedAutoClickerSettings = {
+  theme?: string | null
   clickMode?: string | null
   clickRate?: string | null
   clickRateMode?: string | null
@@ -39,6 +44,8 @@ export type SavedAutoClickerSettings = {
   hotkey?: SavedHotkey | null
   mouseButton?: string | null
   mouseAction?: string | null
+  doubleClickEnabled?: boolean | null
+  doubleClickDelay?: string | null
   clickDurationEnabled?: boolean | null
   clickDurationMin?: string | null
   clickDurationMax?: string | null
@@ -55,6 +62,7 @@ export const clickRateEveryUnits: ClickRateUnit[] = ["ms", "s", "m", "h", "d"]
 export const clickRatePerUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
 export const timeLimitUnits: ClickRateUnit[] = ["s", "m", "h", "d"]
 export const clickModes: ClickMode[] = ["toggle", "hold"]
+export const appThemes: AppTheme[] = ["dark", "light"]
 export const mouseButtons: MouseButtonOption[] = [
   "left",
   "middle",
@@ -66,6 +74,10 @@ export const mouseActions: MouseActionOption[] = ["click", "hold"]
 export const clickRateModeLabels: Record<ClickRateMode, string> = {
   per: "Per",
   every: "Every",
+}
+export const appThemeLabels: Record<AppTheme, string> = {
+  dark: "Dark",
+  light: "Light",
 }
 export const clickRateUnitLabels: Record<ClickRateUnit, string> = {
   ms: "Milliseconds",
@@ -87,6 +99,7 @@ export const mouseActionLabels: Record<MouseActionOption, string> = {
 }
 
 export const defaultAutoClickerSettings: AutoClickerSettings = {
+  theme: "dark",
   clickMode: "hold",
   clickRate: "25",
   clickRateMode: "per",
@@ -94,6 +107,8 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   hotkey: { ...UNBOUND_HOTKEY },
   mouseButton: "left",
   mouseAction: "click",
+  doubleClickEnabled: false,
+  doubleClickDelay: "0",
   clickDurationEnabled: false,
   clickDurationMin: "1",
   clickDurationMax: "1",
@@ -154,6 +169,11 @@ export function normalizeAutoClickerSettings(
         : resolvedLegacyClickDuration ?? defaultAutoClickerSettings.clickDurationMax
 
   return {
+    theme: resolveOption(
+      settings?.theme,
+      appThemes,
+      defaultAutoClickerSettings.theme
+    ),
     clickMode: resolveOption(
       settings?.clickMode,
       clickModes,
@@ -191,6 +211,14 @@ export function normalizeAutoClickerSettings(
       mouseActions,
       defaultAutoClickerSettings.mouseAction
     ),
+    doubleClickEnabled:
+      typeof settings?.doubleClickEnabled === "boolean"
+        ? settings.doubleClickEnabled
+        : defaultAutoClickerSettings.doubleClickEnabled,
+    doubleClickDelay:
+      typeof settings?.doubleClickDelay === "string"
+        ? settings.doubleClickDelay
+        : defaultAutoClickerSettings.doubleClickDelay,
     clickDurationEnabled:
       typeof settings?.clickDurationEnabled === "boolean"
         ? settings.clickDurationEnabled

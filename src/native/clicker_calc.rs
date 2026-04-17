@@ -176,6 +176,8 @@ pub(crate) fn wait_until_precise(deadline: Instant) {
 pub(crate) fn dispatch_mouse_clicks(
     mouse_button: MouseButton,
     count: usize,
+    clicks_per_cycle: usize,
+    double_click_delay: Option<Duration>,
     click_duration_range: Option<ClickDurationRange>,
     click_duration_rng: &mut ClickDurationRng,
 ) -> Result<(), String> {
@@ -183,12 +185,23 @@ pub(crate) fn dispatch_mouse_clicks(
         return Ok(());
     }
 
-    for _ in 0..count {
+    let cycle_size = clicks_per_cycle.max(1);
+
+    for click_index in 0..count {
         dispatch_mouse_button_event(mouse_button, true)?;
         if let Some(click_duration_range) = click_duration_range {
             thread::sleep(click_duration_rng.next_duration(click_duration_range));
         }
         dispatch_mouse_button_event(mouse_button, false)?;
+
+        let click_ends_cycle = (click_index + 1) % cycle_size == 0;
+        if !click_ends_cycle && click_index + 1 < count {
+            if let Some(double_click_delay) = double_click_delay {
+                if !double_click_delay.is_zero() {
+                    thread::sleep(double_click_delay);
+                }
+            }
+        }
     }
 
     Ok(())

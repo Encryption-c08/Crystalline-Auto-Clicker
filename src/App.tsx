@@ -8,12 +8,15 @@ import type {
   DisabledDependencyTarget,
 } from "@/components/disabled-feature-dependency"
 import { ClickLimitPanel } from "@/components/click-limit-panel"
+import { DoubleClickPanel } from "@/components/double-click-panel"
 import { SettingsPanel } from "@/components/settings-panel"
 import { TimeLimitPanel } from "@/components/time-limit-panel"
 import { TitleBar } from "@/components/title-bar"
 import { buildAutoClickerConfig } from "@/config/runtime"
 import type { AutoClickerSettings } from "@/config/settings"
 import {
+  appThemeLabels,
+  appThemes,
   defaultAutoClickerSettings,
   normalizeAutoClickerSettings,
 } from "@/config/settings"
@@ -23,6 +26,8 @@ import {
   saveAutoClickerSettings,
 } from "@/lib/settings-store"
 import { isTauri, trackedInvoke } from "@/lib/tauri"
+import { useTheme } from "@tauri-ui/components/theme-provider.tsx"
+import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
 import { cn } from "@tauri-ui/lib/utils"
 
 const DEFAULT_WINDOW_SIZE = {
@@ -147,6 +152,7 @@ function DockButton({
 }
 
 export default function App() {
+  const { setTheme, theme } = useTheme()
   const [settings, setSettings] = useState<AutoClickerSettings>(
     defaultAutoClickerSettings
   )
@@ -162,6 +168,16 @@ export default function App() {
   function highlightDisabledDependency(target: DisabledDependencyTarget) {
     setDisabledDependencyCue({ target })
   }
+
+  function clearDisabledDependencyCue() {
+    setDisabledDependencyCue(null)
+  }
+
+  useEffect(() => {
+    if (theme !== settings.theme) {
+      setTheme(settings.theme)
+    }
+  }, [setTheme, settings.theme, theme])
 
   useEffect(() => {
     let cancelled = false
@@ -303,6 +319,11 @@ export default function App() {
 
   const advancedPanels = (
     <div className="flex w-full max-w-[30rem] flex-col items-stretch gap-3">
+      <DoubleClickPanel
+        onUnavailablePress={highlightDisabledDependency}
+        setSettings={setSettings}
+        settings={settings}
+      />
       <ClickDurationPanel
         onUnavailablePress={highlightDisabledDependency}
         setSettings={setSettings}
@@ -321,6 +342,48 @@ export default function App() {
     </div>
   )
 
+  const settingsPanel = (
+    <div className="mx-auto w-full max-w-[30rem]">
+      <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
+        <div className="min-w-0 pr-2">
+          <p className="text-base font-semibold text-foreground">Theme</p>
+          <p className="text-sm text-muted-foreground">
+            Choose between dark and light mode.
+          </p>
+        </div>
+
+        <ToggleGroup
+          className="shrink-0 overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+          onValueChange={(value) => {
+            if (!value) {
+              return
+            }
+
+            setSettings((current) => ({
+              ...current,
+              theme: value as AutoClickerSettings["theme"],
+            }))
+          }}
+          size="sm"
+          type="single"
+          value={settings.theme}
+          variant="default"
+        >
+          {appThemes.map((value) => (
+            <ToggleGroupItem
+              aria-label={`Set theme to ${appThemeLabels[value]}`}
+              className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
+              key={value}
+              value={value}
+            >
+              {appThemeLabels[value]}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+    </div>
+  )
+
   return (
     <div className="h-screen overflow-hidden bg-background">
       <TitleBar />
@@ -334,6 +397,7 @@ export default function App() {
                   <SettingsPanel
                     disabledDependencyCue={disabledDependencyCue}
                     layout="compact"
+                    onDisabledDependencyCueConsumed={clearDisabledDependencyCue}
                     runtimeError={runtimeError}
                     setSettings={setSettings}
                     settings={settings}
@@ -346,6 +410,7 @@ export default function App() {
               <div className="grid content-start gap-3">
                 <SettingsPanel
                   disabledDependencyCue={disabledDependencyCue}
+                  onDisabledDependencyCueConsumed={clearDisabledDependencyCue}
                   runtimeError={runtimeError}
                   setSettings={setSettings}
                   settings={settings}
@@ -354,10 +419,8 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="ui-scrollbar-hidden flex h-full items-center justify-center overflow-y-auto px-3 pb-3 pt-3">
-              <p className="text-sm font-medium uppercase tracking-[0.26em] text-muted-foreground/80">
-                Coming soon
-              </p>
+            <div className="ui-scrollbar-hidden h-full overflow-y-auto px-3 pb-3 pt-3">
+              {settingsPanel}
             </div>
           )}
         </div>

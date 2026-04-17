@@ -9,7 +9,7 @@ import { ExternalLinkGuard } from "@tauri-ui/components/external-link-guard.tsx"
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider>
+    <ThemeProvider defaultTheme="dark" storageKey={null}>
       <DesktopAppGuard />
       <ExternalLinkGuard />
       <main data-ui-scroll-container><App /></main>

@@ -11,6 +11,7 @@ export type SettingsPanelLayout = "compact" | "default"
 type SettingsPanelProps = {
   disabledDependencyCue: DisabledDependencyCue | null
   layout?: SettingsPanelLayout
+  onDisabledDependencyCueConsumed?: () => void
   settings: AutoClickerSettings
   setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
   runtimeError: string | null
@@ -19,6 +20,7 @@ type SettingsPanelProps = {
 export function SettingsPanel({
   disabledDependencyCue,
   layout = "default",
+  onDisabledDependencyCueConsumed,
   settings,
   setSettings,
   runtimeError,
@@ -33,6 +35,7 @@ export function SettingsPanel({
       <SettingsPanelContent
         disabledDependencyCue={disabledDependencyCue}
         layout={layout}
+        onDisabledDependencyCueConsumed={onDisabledDependencyCueConsumed}
         runtimeError={runtimeError}
         setSettings={setSettings}
         settings={settings}

@@ -13,6 +13,8 @@ type HotkeyPart = {
   source: Exclude<HotkeySource, "mixed">
 }
 
+type WheelHotkeyDirection = "up" | "down"
+
 const keyboardLabels = new Map<string, string>([
   ["Space", "Space"],
   ["Tab", "Tab"],
@@ -52,11 +54,20 @@ const mouseHotkeyParts = [
   { button: 4, mask: 16, part: { code: "Mouse5", label: "Mouse 5", source: "mouse" as const } },
 ]
 
+const wheelHotkeyParts: Record<WheelHotkeyDirection, HotkeyPart> = {
+  down: { code: "WheelDown", label: "Wheel Down", source: "mouse" },
+  up: { code: "WheelUp", label: "Wheel Up", source: "mouse" },
+}
+
 export const UNBOUND_HOTKEY: Hotkey = {
   code: "",
   label: "Unbound",
   source: "keyboard",
 }
+
+const modifierHotkeyCodes = new Set(
+  modifierHotkeyParts.map((part) => part.code)
+)
 
 function normalizeHotkeyParts(parts: HotkeyPart[]) {
   const uniqueParts: HotkeyPart[] = []
@@ -104,7 +115,7 @@ export function createHotkey(parts: HotkeyPart[]): Hotkey | null {
   }
 }
 
-function modifierPartsFromEvent(event: KeyboardEvent | MouseEvent) {
+function modifierPartsFromEvent(event: KeyboardEvent | MouseEvent | WheelEvent) {
   if (event.metaKey) {
     return []
   }
@@ -191,20 +202,50 @@ function mouseHotkeyPartFromButton(button: number) {
   return mouseHotkeyParts.find((entry) => entry.button === button)?.part ?? null
 }
 
-function mouseHotkeyPartsFromEvent(event: MouseEvent) {
-  const parts: HotkeyPart[] = []
-  const primaryPart = mouseHotkeyPartFromButton(event.button)
+export function hotkeyCaptureCodeFromMouseButton(button: number) {
+  return mouseHotkeyPartFromButton(button)?.code ?? null
+}
 
-  if (primaryPart) {
-    parts.push(primaryPart)
-  }
+function mouseHotkeyPartsFromButtons(buttons: number) {
+  const parts: HotkeyPart[] = []
 
   for (const entry of mouseHotkeyParts) {
-    if ((event.buttons & entry.mask) === 0 || entry.button === event.button) {
+    if ((buttons & entry.mask) !== 0) {
+      parts.push(entry.part)
+    }
+  }
+
+  return parts
+}
+
+function mouseHotkeyPartsFromButtonSequence(buttons: number[]) {
+  const parts: HotkeyPart[] = []
+  const seenButtons = new Set<number>()
+
+  for (const button of buttons) {
+    if (seenButtons.has(button)) {
       continue
     }
 
-    parts.push(entry.part)
+    seenButtons.add(button)
+
+    const part = mouseHotkeyPartFromButton(button)
+    if (part) {
+      parts.push(part)
+    }
+  }
+
+  return parts
+}
+
+function mouseHotkeyPartsFromEvent(event: MouseEvent) {
+  const primaryPart = mouseHotkeyPartFromButton(event.button)
+  const parts = mouseHotkeyPartsFromButtons(event.buttons).filter(
+    (part) => part.code !== primaryPart?.code
+  )
+
+  if (primaryPart) {
+    parts.push(primaryPart)
   }
 
   if (parts.length === 0) {
@@ -215,6 +256,14 @@ function mouseHotkeyPartsFromEvent(event: MouseEvent) {
   }
 
   return parts
+}
+
+function wheelHotkeyPartFromEvent(event: WheelEvent): HotkeyPart | null {
+  if (event.deltaY === 0) {
+    return null
+  }
+
+  return event.deltaY < 0 ? wheelHotkeyParts.up : wheelHotkeyParts.down
 }
 
 function hotkeyPartFromCode(code: string): HotkeyPart | null {
@@ -236,6 +285,13 @@ function hotkeyPartFromCode(code: string): HotkeyPart | null {
   const mousePart = mouseHotkeyParts.find((entry) => entry.part.code === trimmedCode)?.part
   if (mousePart) {
     return mousePart
+  }
+
+  const wheelPart = Object.values(wheelHotkeyParts).find(
+    (part) => part.code === trimmedCode
+  )
+  if (wheelPart) {
+    return wheelPart
   }
 
   if (/^Key[A-Z]$/i.test(trimmedCode)) {
@@ -271,6 +327,61 @@ function hotkeyPartFromCode(code: string): HotkeyPart | null {
   }
 
   return null
+}
+
+export function hotkeyCaptureCodeFromKeyboardEvent(event: KeyboardEvent) {
+  if (event.key === "Control") {
+    return "Ctrl"
+  }
+
+  if (event.key === "Shift") {
+    return "Shift"
+  }
+
+  if (event.key === "Alt") {
+    return "Alt"
+  }
+
+  if (event.key === "Meta") {
+    return null
+  }
+
+  return keyboardHotkeyPartFromEvent(event)?.code ?? null
+}
+
+export function isModifierHotkeyCode(code: string) {
+  return modifierHotkeyCodes.has(code)
+}
+
+export function buildHotkeyFromCaptureCodes(codes: string[]): Hotkey | null {
+  const parts = codes
+    .map((code) => hotkeyPartFromCode(code))
+    .filter((part): part is HotkeyPart => part !== null)
+
+  return createHotkey(parts)
+}
+
+export function buildHotkeyFromPressedInputs({
+  keyboardCodes = [],
+  mouseButtons = [],
+  wheelDirection,
+}: {
+  keyboardCodes?: string[]
+  mouseButtons?: number[]
+  wheelDirection?: WheelHotkeyDirection
+}): Hotkey | null {
+  const keyboardParts = keyboardCodes
+    .map((code) => hotkeyPartFromCode(code))
+    .filter((part): part is HotkeyPart => part !== null)
+  const mouseParts = mouseHotkeyPartsFromButtonSequence(mouseButtons)
+  const wheelPart =
+    wheelDirection !== undefined ? wheelHotkeyParts[wheelDirection] : null
+
+  return createHotkey([
+    ...keyboardParts,
+    ...mouseParts,
+    ...(wheelPart ? [wheelPart] : []),
+  ])
 }
 
 export function parseHotkeyCode(code: string): Hotkey | null {
@@ -319,5 +430,27 @@ export function formatMouseHotkey(event: MouseEvent): Hotkey | null {
   return createHotkey([
     ...modifierPartsFromEvent(event),
     ...mouseHotkeyPartsFromEvent(event),
+  ])
+}
+
+export function formatWheelHotkey(
+  event: WheelEvent,
+  heldMouseButtons: number[] = []
+): Hotkey | null {
+  if (event.metaKey) {
+    return null
+  }
+
+  const wheelPart = wheelHotkeyPartFromEvent(event)
+  if (!wheelPart) {
+    return null
+  }
+
+  return createHotkey([
+    ...modifierPartsFromEvent(event),
+    ...(heldMouseButtons.length > 0
+      ? mouseHotkeyPartsFromButtonSequence(heldMouseButtons)
+      : mouseHotkeyPartsFromButtons(event.buttons)),
+    wheelPart,
   ])
 }

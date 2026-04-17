@@ -19,6 +19,7 @@ const clickRateUnitWindows: Record<ClickRateUnit, number> = {
 
 export const MIN_CLICK_RATE = 1
 export const MAX_CLICK_RATE = 5_000
+export const MIN_DOUBLE_CLICK_DELAY = 0
 export const MIN_CLICK_DURATION = 1
 export const MIN_CLICK_LIMIT = 1
 export const MAX_CLICK_LIMIT = 1_000_000
@@ -35,6 +36,8 @@ export type AutoClickerCommandConfig = {
   intervalMs: number
   mouseButton: MouseButtonOption
   mouseAction: MouseActionOption
+  doubleClickEnabled: boolean
+  doubleClickDelay: string
   clickDurationEnabled: boolean
   clickDurationMin: string
   clickDurationMax: string
@@ -73,6 +76,22 @@ export function normalizeClickRateInput(value: string) {
 
 export function finalizeClickRate(value: string) {
   return normalizeClickRateInput(value) || String(MIN_CLICK_RATE)
+}
+
+export function normalizeDoubleClickDelayInput(value: string) {
+  const digitsOnly = value.replace(/[^0-9]/g, "")
+
+  if (digitsOnly === "") {
+    return ""
+  }
+
+  const normalizedValue = digitsOnly.replace(/^0+(?=\d)/, "")
+
+  return normalizedValue === "" ? String(MIN_DOUBLE_CLICK_DELAY) : normalizedValue
+}
+
+export function finalizeDoubleClickDelay(value: string) {
+  return normalizeDoubleClickDelayInput(value) || String(MIN_DOUBLE_CLICK_DELAY)
 }
 
 export function normalizeClickDurationInput(value: string) {
@@ -186,29 +205,43 @@ export function estimateAverageClicksPerSecond(settings: AutoClickerSettings) {
     return null
   }
 
-  const baseClicksPerSecond = resolveBaseClicksPerSecond(
+  const cycleIntervalMs = resolveClickIntervalMs(
     settings.clickRateMode,
     settings.clickRate,
     settings.clickRateUnit
   )
+  const clicksPerCycle = settings.doubleClickEnabled ? 2 : 1
+  const interClickDelayMs = settings.doubleClickEnabled
+    ? Number.parseInt(finalizeDoubleClickDelay(settings.doubleClickDelay), 10)
+    : 0
+  const averageClickDurationMs = settings.clickDurationEnabled
+    ? (() => {
+        const clickDuration = finalizeClickDurationRange(
+          settings.clickDurationMin,
+          settings.clickDurationMax
+        )
+        const minDuration = Number.parseInt(clickDuration.min, 10)
+        const maxDuration = Number.parseInt(clickDuration.max, 10)
+        const averageDurationMs = (minDuration + maxDuration) / 2
 
-  if (!settings.clickDurationEnabled) {
-    return baseClicksPerSecond
-  }
-
-  const clickDuration = finalizeClickDurationRange(
-    settings.clickDurationMin,
-    settings.clickDurationMax
+        return Number.isFinite(averageDurationMs) && averageDurationMs > 0
+          ? averageDurationMs
+          : 0
+      })()
+    : 0
+  const cycleExecutionMs =
+    averageClickDurationMs * clicksPerCycle +
+    interClickDelayMs * Math.max(0, clicksPerCycle - 1)
+  const cycleSpacingMs = Math.max(
+    cycleIntervalMs,
+    cycleExecutionMs > 0 ? cycleExecutionMs : 0
   )
-  const minDuration = Number.parseInt(clickDuration.min, 10)
-  const maxDuration = Number.parseInt(clickDuration.max, 10)
-  const averageDurationMs = (minDuration + maxDuration) / 2
 
-  if (!Number.isFinite(averageDurationMs) || averageDurationMs <= 0) {
-    return baseClicksPerSecond
+  if (!Number.isFinite(cycleSpacingMs) || cycleSpacingMs <= 0) {
+    return 0
   }
 
-  return Math.min(baseClicksPerSecond, 1_000 / averageDurationMs)
+  return (clicksPerCycle * 1_000) / cycleSpacingMs
 }
 
 export function formatClicksPerSecond(value: number) {
@@ -235,6 +268,7 @@ export function buildAutoClickerConfig(
   settings: AutoClickerSettings
 ): AutoClickerCommandConfig {
   const clickRate = finalizeClickRate(settings.clickRate)
+  const doubleClickDelay = finalizeDoubleClickDelay(settings.doubleClickDelay)
   const clickDuration = finalizeClickDurationRange(
     settings.clickDurationMin,
     settings.clickDurationMax
@@ -257,6 +291,8 @@ export function buildAutoClickerConfig(
     ),
     mouseButton: settings.mouseButton,
     mouseAction: settings.mouseAction,
+    doubleClickEnabled: settings.doubleClickEnabled,
+    doubleClickDelay,
     clickDurationEnabled: settings.clickDurationEnabled,
     clickDurationMin: clickDuration.min,
     clickDurationMax: clickDuration.max,

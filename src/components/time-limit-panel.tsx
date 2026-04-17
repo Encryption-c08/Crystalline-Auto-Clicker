@@ -100,7 +100,7 @@ export function TimeLimitPanel({
     >
       <div
         className={cn(
-          "flex items-stretch rounded-l-lg border border-r-0 transition-colors",
+          "flex items-stretch overflow-hidden rounded-l-lg border border-r-0 transition-colors",
           isTimeLimitActive
             ? "border-border/70 bg-background/65"
             : "border-border/60 bg-background/30"
