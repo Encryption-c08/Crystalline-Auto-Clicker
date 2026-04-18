@@ -83,6 +83,10 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    --ui-scrollbar-track: rgba(15, 23, 42, 0.08);
+    --ui-scrollbar-thumb: rgba(15, 23, 42, 0.28);
+    --ui-scrollbar-thumb-hover: rgba(15, 23, 42, 0.4);
+    --ui-scrollbar-thumb-border: rgba(255, 255, 255, 0.92);
 }
 
 .dark {
@@ -117,6 +121,10 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+    --ui-scrollbar-track: rgba(0, 0, 0, 0.96);
+    --ui-scrollbar-thumb: rgba(255, 255, 255, 0.24);
+    --ui-scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
+    --ui-scrollbar-thumb-border: rgba(0, 0, 0, 0.98);
 }
 
 @layer base {
@@ -205,7 +213,7 @@ body {
 
   .ui-scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.24) rgba(0, 0, 0, 0.96);
+    scrollbar-color: var(--ui-scrollbar-thumb) var(--ui-scrollbar-track);
   }
 
   .ui-scrollbar-thin::-webkit-scrollbar {
@@ -220,18 +228,18 @@ body {
   }
 
   .ui-scrollbar-thin::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.96);
+    background: var(--ui-scrollbar-track);
     border-radius: 999px;
   }
 
   .ui-scrollbar-thin::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.24);
+    background: var(--ui-scrollbar-thumb);
     border-radius: 999px;
-    border: 1px solid rgba(0, 0, 0, 0.98);
+    border: 1px solid var(--ui-scrollbar-thumb-border);
   }
 
   .ui-scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.34);
+    background: var(--ui-scrollbar-thumb-hover);
   }
 
   .ui-scrollbar-thin::-webkit-scrollbar-corner {

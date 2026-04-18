@@ -35,11 +35,11 @@ function DescriptionTooltip({
   return (
     <div className="group/tooltip relative">
       {children}
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-[20rem] -translate-x-1/2 opacity-0 transition-[opacity,transform] duration-120 group-hover/tooltip:opacity-100">
+      <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-max max-w-[min(20rem,calc(100vw-1.5rem))] opacity-0 transition-[opacity,transform] duration-120 group-hover/tooltip:opacity-100">
         <div className="rounded-md border border-white/12 bg-zinc-950/98 px-3 py-1.5 text-xs text-zinc-50 shadow-[0_18px_40px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-sm">
           {description}
         </div>
-        <div className="absolute top-full left-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-[5px] rotate-45 border-r border-b border-white/12 bg-zinc-950/98" />
+        <div className="absolute top-full left-8 h-2.5 w-2.5 -translate-y-[5px] rotate-45 border-r border-b border-white/12 bg-zinc-950/98" />
       </div>
     </div>
   );
@@ -268,139 +268,143 @@ export function LimitsPanel({
     </div>
   );
 
+  const clickLimitSection = (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 pr-2">
+          <p className="text-base font-semibold text-foreground">Click Limit</p>
+        </div>
+
+        <ToggleGroup
+          className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+          onValueChange={(value) => {
+            if (!value || !isClickLimitAvailable) {
+              return;
+            }
+
+            setSettings((current) => ({
+              ...current,
+              clickLimitEnabled: value === "on",
+            }));
+          }}
+          size="sm"
+          type="single"
+          value={isClickLimitActive ? "on" : "off"}
+          variant="default"
+        >
+          <ToggleGroupItem
+            aria-label="Turn click limit off"
+            className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
+            disabled={!isClickLimitAvailable}
+            value="off"
+          >
+            Off
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            aria-label="Turn click limit on"
+            className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
+            disabled={!isClickLimitAvailable}
+            value="on"
+          >
+            On
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+
+      <div className="relative">
+        {clickLimitInputGroup}
+
+        {clickLimitUnavailableReason ? (
+          <DisabledReasonOverlay
+            className="rounded-lg"
+            onClick={() => onUnavailablePress?.("mouse-action-hold")}
+            reason={clickLimitUnavailableReason}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const timeLimitSection = (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 pr-2">
+          <p className="text-base font-semibold text-foreground">Time Limit</p>
+        </div>
+
+        <ToggleGroup
+          className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+          onValueChange={(value) => {
+            if (!value || !isTimeLimitAvailable) {
+              return;
+            }
+
+            setSettings((current) => ({
+              ...current,
+              timeLimitEnabled: value === "on",
+            }));
+            if (value === "off") {
+              setIsTimeLimitUnitOpen(false);
+            }
+          }}
+          size="sm"
+          type="single"
+          value={isTimeLimitActive ? "on" : "off"}
+          variant="default"
+        >
+          <ToggleGroupItem
+            aria-label="Turn time limit off"
+            className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
+            disabled={!isTimeLimitAvailable}
+            value="off"
+          >
+            Off
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            aria-label="Turn time limit on"
+            className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
+            disabled={!isTimeLimitAvailable}
+            value="on"
+          >
+            On
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+
+      <div className="relative">
+        {timeLimitInputGroup}
+
+        {timeLimitUnavailableReason ? (
+          <DisabledReasonOverlay
+            className="rounded-lg"
+            onClick={() => onUnavailablePress?.("click-mode-hold")}
+            reason={timeLimitUnavailableReason}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-full rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
       <div className="grid gap-2.5">
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0 pr-2">
-              <p className="text-base font-semibold text-foreground">
-                Click Limit
-              </p>
-            </div>
-
-            <ToggleGroup
-              className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
-              onValueChange={(value) => {
-                if (!value || !isClickLimitAvailable) {
-                  return;
-                }
-
-                setSettings((current) => ({
-                  ...current,
-                  clickLimitEnabled: value === "on",
-                }));
-              }}
-              size="sm"
-              type="single"
-              value={isClickLimitActive ? "on" : "off"}
-              variant="default"
-            >
-              <ToggleGroupItem
-                aria-label="Turn click limit off"
-                className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
-                disabled={!isClickLimitAvailable}
-                value="off"
-              >
-                Off
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                aria-label="Turn click limit on"
-                className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
-                disabled={!isClickLimitAvailable}
-                value="on"
-              >
-                On
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-
-          <div className="relative">
-            {isClickLimitAvailable ? (
-              <DescriptionTooltip description={CLICK_LIMIT_DESCRIPTION}>
-                {clickLimitInputGroup}
-              </DescriptionTooltip>
-            ) : (
-              clickLimitInputGroup
-            )}
-
-            {clickLimitUnavailableReason ? (
-              <DisabledReasonOverlay
-                className="rounded-lg"
-                onClick={() => onUnavailablePress?.("mouse-action-hold")}
-                reason={clickLimitUnavailableReason}
-              />
-            ) : null}
-          </div>
-        </div>
+        {isClickLimitAvailable && !isClickLimitActive ? (
+          <DescriptionTooltip description={CLICK_LIMIT_DESCRIPTION}>
+            {clickLimitSection}
+          </DescriptionTooltip>
+        ) : (
+          clickLimitSection
+        )}
 
         <div className="border-t border-border/60" />
 
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0 pr-2">
-              <p className="text-base font-semibold text-foreground">
-                Time Limit
-              </p>
-            </div>
-
-            <ToggleGroup
-              className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
-              onValueChange={(value) => {
-                if (!value || !isTimeLimitAvailable) {
-                  return;
-                }
-
-                setSettings((current) => ({
-                  ...current,
-                  timeLimitEnabled: value === "on",
-                }));
-                if (value === "off") {
-                  setIsTimeLimitUnitOpen(false);
-                }
-              }}
-              size="sm"
-              type="single"
-              value={isTimeLimitActive ? "on" : "off"}
-              variant="default"
-            >
-              <ToggleGroupItem
-                aria-label="Turn time limit off"
-                className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
-                disabled={!isTimeLimitAvailable}
-                value="off"
-              >
-                Off
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                aria-label="Turn time limit on"
-                className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
-                disabled={!isTimeLimitAvailable}
-                value="on"
-              >
-                On
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-
-          <div className="relative">
-            {isTimeLimitAvailable ? (
-              <DescriptionTooltip description={TIME_LIMIT_DESCRIPTION}>
-                {timeLimitInputGroup}
-              </DescriptionTooltip>
-            ) : (
-              timeLimitInputGroup
-            )}
-
-            {timeLimitUnavailableReason ? (
-              <DisabledReasonOverlay
-                className="rounded-lg"
-                onClick={() => onUnavailablePress?.("click-mode-hold")}
-                reason={timeLimitUnavailableReason}
-              />
-            ) : null}
-          </div>
-        </div>
+        {isTimeLimitAvailable && !isTimeLimitActive ? (
+          <DescriptionTooltip description={TIME_LIMIT_DESCRIPTION}>
+            {timeLimitSection}
+          </DescriptionTooltip>
+        ) : (
+          timeLimitSection
+        )}
       </div>
     </div>
   );

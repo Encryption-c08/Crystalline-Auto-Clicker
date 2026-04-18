@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
 import {
+  ClickPositionDescriptionTooltip,
   InlineClickPositionControls,
   type ClickPositionControlCallbacks,
 } from "@/components/click-position-panel";
@@ -1041,45 +1042,89 @@ export function SettingsPanelContent({
 
       {clickPositionControls ? (
         <div className="mt-1 border-t border-border/60 pt-3">
-          <button
-            aria-controls={clickPositionSectionId}
-            aria-expanded={isClickPositionSectionExpanded}
-            className={cn(
-              "flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-0",
-              isClickPositionActive || clickPositionDotCount > 0
-                ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
-                : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/65 hover:text-foreground",
-            )}
-            onClick={() =>
-              setIsClickPositionSectionExpanded((current) => !current)
-            }
-            type="button"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.14em]">
-                Click Positions
-              </span>
-              <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
-                {clickPositionDotLabel}
-              </span>
-              <span
-                className={cn(
-                  "rounded-md px-1 py-1 text-[10px] leading-none",
-                  isClickPositionActive
-                    ? "bg-muted-foreground/15 text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
-                {isClickPositionActive ? "On" : "Off"}
-              </span>
-            </div>
-            <ChevronDownIcon
+          {isClickPositionActive ? (
+            <button
+              aria-controls={clickPositionSectionId}
+              aria-expanded={isClickPositionSectionExpanded}
               className={cn(
-                "size-3.5 shrink-0 transition-transform duration-200 ease-out",
-                isClickPositionSectionExpanded && "rotate-180",
+                "flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-0",
+                isClickPositionActive || clickPositionDotCount > 0
+                  ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
+                  : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/65 hover:text-foreground",
               )}
-            />
-          </button>
+              onClick={() =>
+                setIsClickPositionSectionExpanded((current) => !current)
+              }
+              type="button"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[11px] font-semibold uppercase tracking-[0.14em]">
+                  Click Positions
+                </span>
+                <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
+                  {clickPositionDotLabel}
+                </span>
+                <span
+                  className={cn(
+                    "rounded-md px-1 py-1 text-[10px] leading-none",
+                    isClickPositionActive
+                      ? "bg-muted-foreground/15 text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {isClickPositionActive ? "On" : "Off"}
+                </span>
+              </div>
+              <ChevronDownIcon
+                className={cn(
+                  "size-3.5 shrink-0 transition-transform duration-200 ease-out",
+                  isClickPositionSectionExpanded && "rotate-180",
+                )}
+              />
+            </button>
+          ) : (
+            <ClickPositionDescriptionTooltip>
+              <button
+                aria-controls={clickPositionSectionId}
+                aria-expanded={isClickPositionSectionExpanded}
+                className={cn(
+                  "flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-0",
+                  isClickPositionActive || clickPositionDotCount > 0
+                    ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
+                    : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/65 hover:text-foreground",
+                )}
+                onClick={() =>
+                  setIsClickPositionSectionExpanded((current) => !current)
+                }
+                type="button"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[11px] font-semibold uppercase tracking-[0.14em]">
+                    Click Positions
+                  </span>
+                  <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
+                    {clickPositionDotLabel}
+                  </span>
+                  <span
+                    className={cn(
+                      "rounded-md px-1 py-1 text-[10px] leading-none",
+                      isClickPositionActive
+                        ? "bg-muted-foreground/15 text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {isClickPositionActive ? "On" : "Off"}
+                  </span>
+                </div>
+                <ChevronDownIcon
+                  className={cn(
+                    "size-3.5 shrink-0 transition-transform duration-200 ease-out",
+                    isClickPositionSectionExpanded && "rotate-180",
+                  )}
+                />
+              </button>
+            </ClickPositionDescriptionTooltip>
+          )}
 
           {isClickPositionContentMounted ? (
             <div

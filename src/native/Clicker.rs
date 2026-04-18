@@ -32,10 +32,9 @@ pub(crate) use hotkeys::read_pressed_keyboard_hotkey;
 
 #[cfg(target_os = "windows")]
 use clicker_calc::{
-    click_cadence_from_config, dispatch_mouse_clicks, next_cadence_interval,
-    move_cursor_to_position, next_throughput_worker_sleep, next_worker_sleep, press_mouse_button,
-    release_mouse_button, wait_until_precise, ClickDurationRange,
-    ClickDurationRng,
+    click_cadence_from_config, current_cursor_position, dispatch_mouse_clicks, next_cadence_interval,
+    next_throughput_worker_sleep, next_worker_sleep, press_mouse_button, release_mouse_button,
+    wait_until_precise, ClickDurationRange, ClickRandomizer, CursorJitterConfig,
 };
 #[cfg(target_os = "windows")]
 pub(crate) use hotkeys::read_hotkey_state;
@@ -54,6 +53,9 @@ const MIN_DOUBLE_CLICK_DELAY: u64 = 0;
 const DEFAULT_CLICK_DURATION_MAX: &str = "1";
 const DEFAULT_CLICK_DURATION_MIN: &str = "1";
 const MIN_CLICK_DURATION: u64 = 1;
+const DEFAULT_JITTER_AXIS: &str = "0";
+const MIN_JITTER_AXIS: i32 = -500;
+const MAX_JITTER_AXIS: i32 = 500;
 const DEFAULT_TIME_LIMIT: &str = "60";
 const MIN_TIME_LIMIT: u64 = 1;
 const MAX_TIME_LIMIT: u64 = 1_000_000;
@@ -107,6 +109,13 @@ pub enum MouseAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JitterMode {
+    Random,
+    Fixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClickPositionPoint {
     pub id: u32,
@@ -130,6 +139,10 @@ pub struct AutoClickerCommandConfig {
     pub mouse_action: MouseAction,
     pub click_position_enabled: bool,
     pub click_positions: Vec<ClickPositionPoint>,
+    pub jitter_enabled: bool,
+    pub jitter_mode: JitterMode,
+    pub jitter_x: String,
+    pub jitter_y: String,
     pub double_click_enabled: bool,
     pub double_click_delay: String,
     pub click_duration_enabled: bool,
@@ -171,6 +184,10 @@ impl Default for AutoClickerCommandConfig {
             mouse_action: MouseAction::Click,
             click_position_enabled: false,
             click_positions: Vec::new(),
+            jitter_enabled: false,
+            jitter_mode: JitterMode::Random,
+            jitter_x: DEFAULT_JITTER_AXIS.into(),
+            jitter_y: DEFAULT_JITTER_AXIS.into(),
             double_click_enabled: false,
             double_click_delay: DEFAULT_DOUBLE_CLICK_DELAY.into(),
             click_duration_enabled: false,
@@ -338,7 +355,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
         let mut remaining_time_limit: Option<Duration> = None;
         let mut last_time_limit_tick: Option<Instant> = None;
         let mut cadence_carry_nanos = 0_u64;
-        let mut click_duration_rng = ClickDurationRng::new();
+        let mut click_randomizer = ClickRandomizer::new();
+        let mut jitter_anchor_position: Option<ClickPositionPoint> = None;
         let mut next_click_position_index = 0_usize;
         let mut last_schedule_config: Option<AutoClickerCommandConfig> = None;
         let mut next_click_at: Option<Instant> = None;
@@ -366,6 +384,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 remaining_click_limit = None;
                 remaining_time_limit = None;
                 last_time_limit_tick = None;
+                jitter_anchor_position = None;
                 next_click_position_index = 0;
                 last_schedule_config = Some(config.clone());
                 next_click_at = None;
@@ -391,6 +410,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .ok()
                 .copied()
                 .flatten();
+            let jitter_range_result = jitter_range_from_config(&config);
+            let jitter_range = jitter_range_result.as_ref().ok().copied().flatten();
             let click_limit_result = click_limit_from_config(&config);
             let click_limit = click_limit_result.as_ref().ok().and_then(|limit| *limit);
             let time_limit_result = time_limit_from_config(&config);
@@ -410,6 +431,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 || cadence_result.is_err()
                 || double_click_delay_result.is_err()
                 || click_duration_range_result.is_err()
+                || jitter_range_result.is_err()
                 || click_limit_result.is_err()
                 || time_limit_result.is_err()
             {
@@ -419,6 +441,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 remaining_click_limit = None;
                 remaining_time_limit = None;
                 last_time_limit_tick = None;
+                jitter_anchor_position = None;
                 cadence_carry_nanos = 0;
                 next_click_at = None;
             } else {
@@ -445,6 +468,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     remaining_click_limit = click_limit;
                     remaining_time_limit = time_limit;
                     last_time_limit_tick = None;
+                    jitter_anchor_position = None;
                     next_click_position_index = 0;
                 }
 
@@ -452,6 +476,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     remaining_click_limit = click_limit;
                     remaining_time_limit = time_limit;
                     last_time_limit_tick = None;
+                    jitter_anchor_position = None;
                     next_click_position_index = 0;
                 }
 
@@ -459,6 +484,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     remaining_click_limit = None;
                     remaining_time_limit = None;
                     last_time_limit_tick = None;
+                    jitter_anchor_position = None;
                     next_click_position_index = 0;
                 }
             }
@@ -520,6 +546,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 remaining_click_limit = None;
                 remaining_time_limit = None;
                 last_time_limit_tick = None;
+                jitter_anchor_position = None;
                 cadence_carry_nanos = 0;
                 next_click_at = None;
             }
@@ -535,6 +562,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                             next_click_at = None;
                             remaining_time_limit = None;
                             last_time_limit_tick = None;
+                            jitter_anchor_position = None;
                             Some(error)
                         } else if let Some(cadence) = cadence {
                             if next_click_at.is_none() {
@@ -584,111 +612,149 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         remaining_click_limit = None;
                                         remaining_time_limit = None;
                                         last_time_limit_tick = None;
+                                        jitter_anchor_position = None;
                                         cadence_carry_nanos = 0;
                                         next_click_at = None;
                                         None
                                     } else {
-                                        let result = if click_positions_active_from_config(&config)
+                                        let jitter_anchor_for_dispatch_result = if jitter_range.is_some()
+                                            && !click_positions_active_from_config(&config)
                                         {
-                                            let mut executed_click_count = 0_usize;
-                                            let mut dispatch_error = None;
-
-                                            for _ in 0..due_cycles {
-                                                let cycle_click_count = remaining_click_limit
-                                                    .map(|remaining| {
-                                                        clicks_per_cycle.min(remaining as usize)
-                                                    })
-                                                    .unwrap_or(clicks_per_cycle);
-
-                                                if cycle_click_count == 0 {
-                                                    break;
-                                                }
-
-                                                if let Some(position) = next_click_position(
-                                                    &config,
-                                                    &mut next_click_position_index,
-                                                ) {
-                                                    if let Err(error) =
-                                                        move_cursor_to_position(position)
-                                                    {
-                                                        dispatch_error = Some(error);
-                                                        break;
+                                            if jitter_anchor_position.is_none() {
+                                                match current_cursor_position() {
+                                                    Ok(position) => {
+                                                        jitter_anchor_position = Some(position);
+                                                        Ok(jitter_anchor_position)
                                                     }
+                                                    Err(error) => Err(error),
                                                 }
-
-                                                if let Err(error) = dispatch_mouse_clicks(
-                                                    config.mouse_button,
-                                                    cycle_click_count,
-                                                    clicks_per_cycle,
-                                                    double_click_delay,
-                                                    click_duration_range,
-                                                    &mut click_duration_rng,
-                                                ) {
-                                                    dispatch_error = Some(error);
-                                                    break;
-                                                }
-
-                                                executed_click_count += cycle_click_count;
-
-                                                if let Some(remaining) =
-                                                    remaining_click_limit.as_mut()
-                                                {
-                                                    *remaining = remaining
-                                                        .saturating_sub(cycle_click_count as u64);
-                                                    if *remaining == 0 {
-                                                        break;
-                                                    }
-                                                }
+                                            } else {
+                                                Ok(jitter_anchor_position)
                                             }
-
-                                            dispatch_error.map(Err).unwrap_or_else(|| {
-                                                Ok(executed_click_count)
-                                            })
                                         } else {
-                                            dispatch_mouse_clicks(
-                                                config.mouse_button,
-                                                click_count,
-                                                clicks_per_cycle,
-                                                double_click_delay,
-                                                click_duration_range,
-                                                &mut click_duration_rng,
-                                            )
-                                            .map(|_| click_count)
+                                            Ok(None)
                                         };
+                                        match jitter_anchor_for_dispatch_result {
+                                            Ok(jitter_anchor_for_dispatch) => {
+                                                let result = if click_positions_active_from_config(&config)
+                                                {
+                                                    let mut executed_click_count = 0_usize;
+                                                    let mut dispatch_error = None;
 
-                                        if let Ok(executed_click_count) = result {
-                                            if let Some(remaining) =
-                                                remaining_click_limit.as_mut()
-                                            {
-                                                if !click_positions_active_from_config(&config) {
-                                                    *remaining = remaining
-                                                        .saturating_sub(executed_click_count as u64);
-                                                }
+                                                    for _ in 0..due_cycles {
+                                                        let cycle_click_count = remaining_click_limit
+                                                            .map(|remaining| {
+                                                                clicks_per_cycle.min(remaining as usize)
+                                                            })
+                                                            .unwrap_or(clicks_per_cycle);
 
-                                                if *remaining == 0 {
+                                                        if cycle_click_count == 0 {
+                                                            break;
+                                                        }
+
+                                                        if let Some(position) = next_click_position(
+                                                            &config,
+                                                            &mut next_click_position_index,
+                                                        ) {
+                                                            match dispatch_mouse_clicks(
+                                                                config.mouse_button,
+                                                                cycle_click_count,
+                                                                clicks_per_cycle,
+                                                                double_click_delay,
+                                                                click_duration_range,
+                                                                jitter_range,
+                                                                Some(position),
+                                                                &mut click_randomizer,
+                                                            ) {
+                                                                Ok(dispatched_click_count) => {
+                                                                    executed_click_count +=
+                                                                        dispatched_click_count;
+
+                                                                    if let Some(remaining) =
+                                                                        remaining_click_limit
+                                                                            .as_mut()
+                                                                    {
+                                                                        *remaining = remaining
+                                                                            .saturating_sub(
+                                                                                dispatched_click_count
+                                                                                    as u64,
+                                                                            );
+                                                                        if *remaining == 0 {
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                Err(error) => {
+                                                                    dispatch_error = Some(error);
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    dispatch_error.map(Err).unwrap_or_else(|| {
+                                                        Ok(executed_click_count)
+                                                    })
+                                                } else {
+                                                    dispatch_mouse_clicks(
+                                                        config.mouse_button,
+                                                        click_count,
+                                                        clicks_per_cycle,
+                                                        double_click_delay,
+                                                        click_duration_range,
+                                                        jitter_range,
+                                                        jitter_anchor_for_dispatch,
+                                                        &mut click_randomizer,
+                                                    )
+                                                };
+
+                                                if let Ok(executed_click_count) = result {
+                                                    if let Some(remaining) =
+                                                        remaining_click_limit.as_mut()
+                                                    {
+                                                        if !click_positions_active_from_config(&config) {
+                                                            *remaining = remaining
+                                                                .saturating_sub(executed_click_count as u64);
+                                                        }
+
+                                                        if *remaining == 0 {
+                                                            clicker_enabled = false;
+                                                            limit_locked_until_release = true;
+                                                            remaining_click_limit = None;
+                                                            remaining_time_limit = None;
+                                                            last_time_limit_tick = None;
+                                                            jitter_anchor_position = None;
+                                                            cadence_carry_nanos = 0;
+                                                            next_click_at = None;
+                                                        } else {
+                                                            next_click_at = Some(next_scheduled_at);
+                                                        }
+                                                    } else {
+                                                        next_click_at = Some(next_scheduled_at);
+                                                    }
+                                                } else {
                                                     clicker_enabled = false;
-                                                    limit_locked_until_release = true;
                                                     remaining_click_limit = None;
                                                     remaining_time_limit = None;
                                                     last_time_limit_tick = None;
+                                                    jitter_anchor_position = None;
                                                     cadence_carry_nanos = 0;
                                                     next_click_at = None;
-                                                } else {
-                                                    next_click_at = Some(next_scheduled_at);
                                                 }
-                                            } else {
-                                                next_click_at = Some(next_scheduled_at);
-                                            }
-                                        } else {
-                                            clicker_enabled = false;
-                                            remaining_click_limit = None;
-                                            remaining_time_limit = None;
-                                            last_time_limit_tick = None;
-                                            cadence_carry_nanos = 0;
-                                            next_click_at = None;
-                                        }
 
-                                        result.err()
+                                                result.err()
+                                            }
+                                            Err(error) => {
+                                                clicker_enabled = false;
+                                                remaining_click_limit = None;
+                                                remaining_time_limit = None;
+                                                last_time_limit_tick = None;
+                                                jitter_anchor_position = None;
+                                                cadence_carry_nanos = 0;
+                                                next_click_at = None;
+                                                Some(error)
+                                            }
+                                        }
                                     }
                                 } else {
                                     None
@@ -699,6 +765,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                             remaining_click_limit = None;
                             remaining_time_limit = None;
                             last_time_limit_tick = None;
+                            jitter_anchor_position = None;
                             cadence_carry_nanos = 0;
                             next_click_at = None;
                             None
@@ -718,6 +785,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                 remaining_click_limit = None;
                                 remaining_time_limit = None;
                                 last_time_limit_tick = None;
+                                jitter_anchor_position = None;
                                 Some(error)
                             }
                         }
@@ -726,6 +794,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             } else {
                 cadence_carry_nanos = 0;
                 next_click_at = None;
+                jitter_anchor_position = None;
 
                 match ensure_mouse_button_released(&mut held_mouse_button) {
                     Ok(()) => None,
@@ -734,6 +803,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                         remaining_click_limit = None;
                         remaining_time_limit = None;
                         last_time_limit_tick = None;
+                        jitter_anchor_position = None;
                         Some(error)
                     }
                 }
@@ -751,6 +821,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     .or_else(|| cadence_result.err())
                     .or_else(|| double_click_delay_result.err())
                     .or_else(|| click_duration_range_result.err())
+                    .or_else(|| jitter_range_result.err())
                     .or_else(|| click_limit_result.err())
                     .or_else(|| time_limit_result.err())
                     .or_else(|| app_window_active_result.err())
@@ -834,6 +905,7 @@ fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(),
     }
 
     double_click_delay_from_config(config)?;
+    jitter_range_from_config(config)?;
     click_duration_range_from_config(config)?;
     click_limit_from_config(config)?;
     time_limit_from_config(config)?;
@@ -852,6 +924,8 @@ fn normalize_auto_clicker_config(
     config
         .process_blacklist
         .retain(|rule| !config.process_whitelist.iter().any(|item| item == rule));
+    config.jitter_x = normalize_jitter_axis_value(&config.jitter_x, "Jitter X axis")?;
+    config.jitter_y = normalize_jitter_axis_value(&config.jitter_y, "Jitter Y axis")?;
     if config.double_click_enabled && matches!(config.mouse_action, MouseAction::Click) {
         config.double_click_delay = normalize_double_click_delay_value(&config.double_click_delay)?;
     }
@@ -976,6 +1050,61 @@ fn parse_double_click_delay_value(value: &str) -> Result<u64, String> {
     }
 
     Ok(double_click_delay)
+}
+
+#[cfg(target_os = "windows")]
+fn jitter_range_from_config(
+    config: &AutoClickerCommandConfig,
+) -> Result<Option<CursorJitterConfig>, String> {
+    if !config.jitter_enabled || !matches!(config.mouse_action, MouseAction::Click) {
+        return Ok(None);
+    }
+
+    let (jitter_x, jitter_y) = parse_jitter_axis_values(&config.jitter_x, &config.jitter_y)?;
+    if jitter_x == 0 && jitter_y == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(CursorJitterConfig::from_pixels(
+        config.jitter_mode,
+        jitter_x as i32,
+        jitter_y as i32,
+    )))
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_jitter_axis_value(value: &str, label: &str) -> Result<String, String> {
+    Ok(parse_jitter_axis_value(value, label)?.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn parse_jitter_axis_values(x_value: &str, y_value: &str) -> Result<(i32, i32), String> {
+    Ok((
+        parse_jitter_axis_value(x_value, "Jitter X axis")?,
+        parse_jitter_axis_value(y_value, "Jitter Y axis")?,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn parse_jitter_axis_value(value: &str, label: &str) -> Result<i32, String> {
+    let trimmed_value = value.trim();
+    let normalized_value = if trimmed_value.is_empty() {
+        DEFAULT_JITTER_AXIS
+    } else {
+        trimmed_value
+    };
+
+    let jitter_axis = normalized_value
+        .parse::<i32>()
+        .map_err(|_| format!("{label} must be a whole number."))?;
+
+    if !(MIN_JITTER_AXIS..=MAX_JITTER_AXIS).contains(&jitter_axis) {
+        return Err(format!(
+            "{label} must be between {MIN_JITTER_AXIS} and {MAX_JITTER_AXIS} px."
+        ));
+    }
+
+    Ok(jitter_axis)
 }
 
 #[cfg(target_os = "windows")]

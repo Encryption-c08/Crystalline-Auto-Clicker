@@ -10,6 +10,7 @@ export type MouseButtonOption =
   | "mouse4"
   | "mouse5";
 export type MouseActionOption = "click" | "hold";
+export type JitterMode = "random" | "fixed";
 export type ClickEngine = "classic" | "throughput";
 export type AppTheme = "dark" | "light";
 export type ClickPosition = {
@@ -36,6 +37,10 @@ export type AutoClickerSettings = {
   clickPositionDotsVisible: boolean;
   clickPositionHotkey: Hotkey;
   clickPositions: ClickPosition[];
+  jitterEnabled: boolean;
+  jitterMode: JitterMode;
+  jitterX: string;
+  jitterY: string;
   doubleClickEnabled: boolean;
   doubleClickDelay: string;
   clickDurationEnabled: boolean;
@@ -78,6 +83,10 @@ export type SavedAutoClickerSettings = {
   clickPositionDotsVisible?: boolean | null;
   clickPositionHotkey?: SavedHotkey | null;
   clickPositions?: SavedClickPosition[] | null;
+  jitterEnabled?: boolean | null;
+  jitterMode?: string | null;
+  jitterX?: string | null;
+  jitterY?: string | null;
   doubleClickEnabled?: boolean | null;
   doubleClickDelay?: string | null;
   clickDurationEnabled?: boolean | null;
@@ -105,6 +114,7 @@ export const mouseButtons: MouseButtonOption[] = [
   "mouse5",
 ];
 export const mouseActions: MouseActionOption[] = ["click", "hold"];
+export const jitterModes: JitterMode[] = ["random", "fixed"];
 export const clickRateModeLabels: Record<ClickRateMode, string> = {
   per: "Per",
   every: "Every",
@@ -131,6 +141,10 @@ export const mouseActionLabels: Record<MouseActionOption, string> = {
   click: "Click",
   hold: "Hold",
 };
+export const jitterModeLabels: Record<JitterMode, string> = {
+  random: "Random",
+  fixed: "Fixed",
+};
 
 export const defaultAutoClickerSettings: AutoClickerSettings = {
   theme: "dark",
@@ -150,6 +164,10 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   clickPositionDotsVisible: true,
   clickPositionHotkey: { ...UNBOUND_HOTKEY },
   clickPositions: [],
+  jitterEnabled: false,
+  jitterMode: "random",
+  jitterX: "0",
+  jitterY: "0",
   doubleClickEnabled: false,
   doubleClickDelay: "0",
   clickDurationEnabled: false,
@@ -431,6 +449,23 @@ export function normalizeAutoClickerSettings(
         : defaultAutoClickerSettings.clickPositionHotkey,
     ),
     clickPositions: normalizedClickPositions,
+    jitterEnabled:
+      typeof settings?.jitterEnabled === "boolean"
+        ? settings.jitterEnabled
+        : defaultAutoClickerSettings.jitterEnabled,
+    jitterMode: resolveOption(
+      settings?.jitterMode,
+      jitterModes,
+      defaultAutoClickerSettings.jitterMode,
+    ),
+    jitterX:
+      typeof settings?.jitterX === "string"
+        ? settings.jitterX
+        : defaultAutoClickerSettings.jitterX,
+    jitterY:
+      typeof settings?.jitterY === "string"
+        ? settings.jitterY
+        : defaultAutoClickerSettings.jitterY,
     doubleClickEnabled:
       typeof settings?.doubleClickEnabled === "boolean"
         ? settings.doubleClickEnabled

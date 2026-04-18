@@ -9,6 +9,7 @@ import type {
   DisabledDependencyTarget,
 } from "@/components/disabled-feature-dependency";
 import { DoubleClickPanel } from "@/components/double-click-panel";
+import { JitterPanel } from "@/components/jitter-panel";
 import { ProcessFilterPanel } from "@/components/process-filter-panel";
 import { LimitsPanel } from "@/components/limits-panel";
 import { SettingsPanel } from "@/components/settings-panel";
@@ -796,6 +797,11 @@ export default function App() {
         settings={settings}
       />
       <ClickDurationPanel
+        onUnavailablePress={highlightDisabledDependency}
+        setSettings={setSettings}
+        settings={settings}
+      />
+      <JitterPanel
         onUnavailablePress={highlightDisabledDependency}
         setSettings={setSettings}
         settings={settings}

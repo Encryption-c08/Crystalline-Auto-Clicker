@@ -3,15 +3,17 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use windows_sys::Win32::Foundation::POINT;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::SetCursorPos;
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 
 use super::{
-    AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, MouseButton,
+    AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, JitterMode,
+    MouseButton,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,11 +31,28 @@ impl ClickDurationRange {
     }
 }
 
-pub(crate) struct ClickDurationRng {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CursorJitterConfig {
+    pub(crate) mode: JitterMode,
+    pub(crate) x_axis_px: i32,
+    pub(crate) y_axis_px: i32,
+}
+
+impl CursorJitterConfig {
+    pub(crate) fn from_pixels(mode: JitterMode, x_axis_px: i32, y_axis_px: i32) -> Self {
+        Self {
+            mode,
+            x_axis_px,
+            y_axis_px,
+        }
+    }
+}
+
+pub(crate) struct ClickRandomizer {
     state: u64,
 }
 
-impl ClickDurationRng {
+impl ClickRandomizer {
     pub(crate) fn new() -> Self {
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -67,6 +86,43 @@ impl ClickDurationRng {
 
         let span = range.max_ms - range.min_ms + 1;
         Duration::from_millis(range.min_ms + (self.next_u64() % span))
+    }
+
+    fn next_axis_offset(&mut self, axis_px: i32, mode: JitterMode) -> i32 {
+        if axis_px == 0 {
+            return 0;
+        }
+
+        match mode {
+            JitterMode::Fixed => axis_px,
+            JitterMode::Random => {
+                let min_offset = axis_px.min(0);
+                let max_offset = axis_px.max(0);
+                let span = i64::from(max_offset)
+                    .checked_sub(i64::from(min_offset))
+                    .and_then(|value| value.checked_add(1))
+                    .map(|value| value as u64)
+                    .unwrap_or(u64::MAX);
+
+                min_offset + (self.next_u64() % span) as i32
+            }
+        }
+    }
+
+    fn next_jittered_position(
+        &mut self,
+        base_position: ClickPositionPoint,
+        jitter: CursorJitterConfig,
+    ) -> ClickPositionPoint {
+        ClickPositionPoint {
+            id: base_position.id,
+            x: base_position
+                .x
+                .saturating_add(self.next_axis_offset(jitter.x_axis_px, jitter.mode)),
+            y: base_position
+                .y
+                .saturating_add(self.next_axis_offset(jitter.y_axis_px, jitter.mode)),
+        }
     }
 }
 
@@ -182,20 +238,46 @@ pub(crate) fn dispatch_mouse_clicks(
     clicks_per_cycle: usize,
     double_click_delay: Option<Duration>,
     click_duration_range: Option<ClickDurationRange>,
-    click_duration_rng: &mut ClickDurationRng,
-) -> Result<(), String> {
+    cursor_jitter: Option<CursorJitterConfig>,
+    base_position: Option<ClickPositionPoint>,
+    randomizer: &mut ClickRandomizer,
+) -> Result<usize, String> {
     if count == 0 {
-        return Ok(());
+        return Ok(0);
     }
 
     let cycle_size = clicks_per_cycle.max(1);
+    let mut dispatched_click_count = 0_usize;
 
     for click_index in 0..count {
-        dispatch_mouse_button_event(mouse_button, true)?;
-        if let Some(click_duration_range) = click_duration_range {
-            thread::sleep(click_duration_rng.next_duration(click_duration_range));
+        let click_base_position = if let Some(base_position) = base_position {
+            Some(base_position)
+        } else if cursor_jitter.is_some() {
+            Some(current_cursor_position()?)
+        } else {
+            None
+        };
+        let mut should_click_on_restore = false;
+
+        if let Some(base_position) = click_base_position {
+            let target_position = cursor_jitter
+                .map(|jitter| randomizer.next_jittered_position(base_position, jitter))
+                .unwrap_or(base_position);
+            should_click_on_restore =
+                cursor_jitter.is_some() && !click_positions_match(target_position, base_position);
+            move_cursor_to_position(target_position)?;
         }
-        dispatch_mouse_button_event(mouse_button, false)?;
+
+        dispatch_single_mouse_click(mouse_button, click_duration_range, randomizer)?;
+        dispatched_click_count += 1;
+
+        if should_click_on_restore {
+            if let Some(base_position) = click_base_position {
+                move_cursor_to_position(base_position)?;
+                dispatch_single_mouse_click(mouse_button, click_duration_range, randomizer)?;
+                dispatched_click_count += 1;
+            }
+        }
 
         let click_ends_cycle = (click_index + 1) % cycle_size == 0;
         if !click_ends_cycle && click_index + 1 < count {
@@ -207,7 +289,7 @@ pub(crate) fn dispatch_mouse_clicks(
         }
     }
 
-    Ok(())
+    Ok(dispatched_click_count)
 }
 
 pub(crate) fn press_mouse_button(mouse_button: MouseButton) -> Result<(), String> {
@@ -224,6 +306,36 @@ pub(crate) fn move_cursor_to_position(position: ClickPositionPoint) -> Result<()
     }
 
     Ok(())
+}
+
+pub(crate) fn current_cursor_position() -> Result<ClickPositionPoint, String> {
+    let mut point = POINT { x: 0, y: 0 };
+
+    if unsafe { GetCursorPos(&mut point) } == 0 {
+        return Err("Unable to read the current cursor position.".into());
+    }
+
+    Ok(ClickPositionPoint {
+        id: 0,
+        x: point.x,
+        y: point.y,
+    })
+}
+
+fn click_positions_match(left: ClickPositionPoint, right: ClickPositionPoint) -> bool {
+    left.x == right.x && left.y == right.y
+}
+
+fn dispatch_single_mouse_click(
+    mouse_button: MouseButton,
+    click_duration_range: Option<ClickDurationRange>,
+    randomizer: &mut ClickRandomizer,
+) -> Result<(), String> {
+    dispatch_mouse_button_event(mouse_button, true)?;
+    if let Some(click_duration_range) = click_duration_range {
+        thread::sleep(randomizer.next_duration(click_duration_range));
+    }
+    dispatch_mouse_button_event(mouse_button, false)
 }
 
 fn click_window_nanos(click_rate_unit: ClickRateUnit) -> u64 {

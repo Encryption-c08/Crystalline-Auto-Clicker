@@ -20,6 +20,26 @@ import { cn } from "@tauri-ui/lib/utils";
 const CLICK_POSITION_HOTKEY_DESCRIPTION =
   "Spawns a dot at your cursor position.";
 const CLEAR_DOTS_DESCRIPTION = "Deletes every dot currently on the screen.";
+export const CLICK_POSITION_DESCRIPTION =
+  "Lets you place dots and replay clicks at those saved positions in order.";
+
+export function ClickPositionDescriptionTooltip({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return (
+    <div className="group/click-position-tooltip relative">
+      {children}
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-[18rem] -translate-x-1/2 opacity-0 transition-[opacity,transform] duration-120 group-hover/click-position-tooltip:opacity-100">
+        <div className="rounded-md border border-white/12 bg-zinc-950/98 px-3 py-1.5 text-xs text-zinc-50 shadow-[0_18px_40px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-sm">
+          {CLICK_POSITION_DESCRIPTION}
+        </div>
+        <div className="absolute top-full left-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-[5px] rotate-45 border-r border-b border-white/12 bg-zinc-950/98" />
+      </div>
+    </div>
+  );
+}
 
 function HotkeyTooltip({ children }: { children: ReactNode }) {
   return (
@@ -270,7 +290,7 @@ function ClickPositionControls({
   );
 
   if (isInline) {
-    return (
+    const inlineContent = (
       <div className="grid gap-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="mr-auto flex min-w-0 items-center gap-2.5">
@@ -287,9 +307,11 @@ function ClickPositionControls({
         </div>
       </div>
     );
+
+    return inlineContent;
   }
 
-  return (
+  const panelContent = (
     <div className="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
       <p className="row-span-2 pt-1 text-base font-semibold text-foreground">
         Click Positions
@@ -304,6 +326,12 @@ function ClickPositionControls({
         {hotkeyAndPlaybackControls}
       </div>
     </div>
+  );
+
+  return isClickPositionActive ? (
+    panelContent
+  ) : (
+    <ClickPositionDescriptionTooltip>{panelContent}</ClickPositionDescriptionTooltip>
   );
 }
 
