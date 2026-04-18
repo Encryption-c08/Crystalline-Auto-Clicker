@@ -18,6 +18,10 @@ import { cn } from "@tauri-ui/lib/utils"
 
 const DOT_HIT_RADIUS = 22
 const CURSOR_POLL_MS = 20
+const CURSOR_PICKER_OFFSET_X = 18
+const CURSOR_PICKER_OFFSET_Y = 24
+const CLICK_POSITION_MARKER_BACKGROUND =
+  "radial-gradient(circle at center, rgba(0,0,0,0) 0 34%, rgba(255,255,255,0.96) 34% 58%, rgba(10,10,10,0.96) 58% 100%)"
 
 function findNearbyDotId(
   x: number,
@@ -84,13 +88,51 @@ function ClickPositionDot({
             "pointer-events-none absolute h-3.5 w-3.5 rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.78),0_0_0_2px_rgba(0,0,0,0.92),0_0_16px_rgba(255,255,255,0.16)]",
             isAnimating && "click-position-dot-enter"
           )}
-          style={{
-            background:
-              "radial-gradient(circle at center, rgba(0,0,0,0) 0 34%, rgba(255,255,255,0.96) 34% 58%, rgba(10,10,10,0.96) 58% 100%)",
-          }}
+          style={{ background: CLICK_POSITION_MARKER_BACKGROUND }}
         />
         <span className="pointer-events-none absolute right-[1px] bottom-[1px] rounded-md border border-white/12 bg-zinc-950/96 px-1 py-[1px] text-[8px] font-semibold leading-none text-zinc-50 shadow-[0_4px_10px_rgba(0,0,0,0.32)]">
           {index + 1}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function ProcessPickerCursorHint({
+  cursorX,
+  cursorY,
+  label,
+  originX,
+  originY,
+  scaleFactor,
+}: {
+  cursorX: number
+  cursorY: number
+  label: string | null
+  originX: number
+  originY: number
+  scaleFactor: number
+}) {
+  const normalizedLabel = label?.trim()
+  if (!normalizedLabel) {
+    return null
+  }
+
+  const left = (cursorX - originX) / scaleFactor
+  const top = (cursorY - originY) / scaleFactor
+
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left,
+        top,
+        transform: `translate(${CURSOR_PICKER_OFFSET_X}px, ${CURSOR_PICKER_OFFSET_Y}px)`,
+      }}
+    >
+      <div className="max-w-[24rem] rounded-lg border border-white/10 bg-zinc-950/95 px-3 py-2 text-zinc-50 shadow-[0_18px_45px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.04)] backdrop-blur-sm">
+        <span className="block max-w-[20rem] truncate text-[12px] font-medium leading-none text-zinc-50">
+          {normalizedLabel}
         </span>
       </div>
     </div>
@@ -107,6 +149,7 @@ export function ClickPositionOverlayApp() {
   const [scaleFactor, setScaleFactor] = useState(1)
   const seenIdsRef = useRef<Set<number>>(new Set())
   const isInteractiveRef = useRef(false)
+  const processPickerActive = overlayState.processPicker.active
 
   useEffect(() => {
     document.documentElement.dataset.overlayWindow = "click-position"
@@ -203,12 +246,22 @@ export function ClickPositionOverlayApp() {
   }, [draggingId, overlayState.positions])
 
   useEffect(() => {
+    if (!processPickerActive) {
+      return
+    }
+
+    setDraggingId(null)
+    setHoveredDotId(null)
+  }, [processPickerActive])
+
+  useEffect(() => {
     if (!isTauri()) {
       return undefined
     }
 
     const shouldBeInteractive =
       overlayState.visible &&
+      !processPickerActive &&
       overlayState.positions.length > 0 &&
       (draggingId !== null || hoveredDotId !== null)
     if (isInteractiveRef.current === shouldBeInteractive) {
@@ -222,7 +275,13 @@ export function ClickPositionOverlayApp() {
     })
 
     return undefined
-  }, [draggingId, hoveredDotId, overlayState.positions.length, overlayState.visible])
+  }, [
+    draggingId,
+    hoveredDotId,
+    overlayState.positions.length,
+    overlayState.visible,
+    processPickerActive,
+  ])
 
   useEffect(() => {
     return () => {
@@ -238,7 +297,12 @@ export function ClickPositionOverlayApp() {
   }, [])
 
   useEffect(() => {
-    if (!isTauri() || !overlayState.visible || overlayState.positions.length === 0) {
+    if (
+      !isTauri() ||
+      !overlayState.visible ||
+      processPickerActive ||
+      overlayState.positions.length === 0
+    ) {
       setHoveredDotId(null)
       return undefined
     }
@@ -282,7 +346,7 @@ export function ClickPositionOverlayApp() {
         window.clearTimeout(timeoutId)
       }
     }
-  }, [draggingId, overlayState.positions, overlayState.visible])
+  }, [draggingId, overlayState.positions, overlayState.visible, processPickerActive])
 
   useEffect(() => {
     if (!isTauri() || draggingId === null) {
@@ -368,6 +432,16 @@ export function ClickPositionOverlayApp() {
           scaleFactor={scaleFactor}
         />
       ))}
+      {processPickerActive ? (
+        <ProcessPickerCursorHint
+          cursorX={overlayState.processPicker.cursorX}
+          cursorY={overlayState.processPicker.cursorY}
+          label={overlayState.processPicker.label}
+          originX={overlayState.originX}
+          originY={overlayState.originY}
+          scaleFactor={scaleFactor}
+        />
+      ) : null}
     </div>
   )
 }

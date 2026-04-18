@@ -17,12 +17,20 @@ export type ClickPositionOverlayMoveEvent = {
   y: number
 }
 
+export type ProcessPickerOverlayState = {
+  active: boolean
+  cursorX: number
+  cursorY: number
+  label: string | null
+}
+
 export type ClickPositionOverlayState = {
   editable: boolean
   height: number
   originX: number
   originY: number
   positions: ClickPosition[]
+  processPicker: ProcessPickerOverlayState
   visible: boolean
   width: number
 }
@@ -33,6 +41,12 @@ const EMPTY_OVERLAY_STATE: ClickPositionOverlayState = {
   originX: 0,
   originY: 0,
   positions: [],
+  processPicker: {
+    active: false,
+    cursorX: 0,
+    cursorY: 0,
+    label: null,
+  },
   visible: false,
   width: 0,
 }
@@ -76,5 +90,8 @@ export async function setClickPositionOverlayInteractive(interactive: boolean) {
 }
 
 export function emptyClickPositionOverlayState() {
-  return { ...EMPTY_OVERLAY_STATE }
+  return {
+    ...EMPTY_OVERLAY_STATE,
+    processPicker: { ...EMPTY_OVERLAY_STATE.processPicker },
+  }
 }

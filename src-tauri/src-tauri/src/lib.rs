@@ -25,8 +25,16 @@ use windows_sys::Win32::{
 
 #[path = "../../../src/native/Clicker.rs"]
 mod auto_clicker;
+#[path = "../../../src/native/process_filters.rs"]
+mod process_filters;
 
 use auto_clicker::{AutoClickerCommandConfig, AutoClickerController, AutoClickerStatus};
+use process_filters::{
+    foreground_process_name as resolve_foreground_process_name,
+    list_open_app_processes as resolve_open_app_processes, OpenAppProcess,
+    list_running_process_names as resolve_running_process_names,
+    pick_process_name_from_click as resolve_pick_process_name_from_click,
+};
 
 struct AppState {
     auto_clicker: AutoClickerController,
@@ -96,6 +104,10 @@ struct PersistedClickPosition {
 struct PersistedAutoClickerSettings {
     theme: Option<String>,
     close_to_tray: Option<bool>,
+    process_whitelist_enabled: Option<bool>,
+    process_whitelist: Option<Vec<String>>,
+    process_blacklist_enabled: Option<bool>,
+    process_blacklist: Option<Vec<String>>,
     click_mode: Option<String>,
     click_rate: Option<String>,
     click_rate_mode: Option<String>,
@@ -156,12 +168,22 @@ struct ClickPositionOverlayRequest {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProcessPickerOverlayState {
+    active: bool,
+    cursor_x: i32,
+    cursor_y: i32,
+    label: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayState {
     editable: bool,
     height: i32,
     origin_x: i32,
     origin_y: i32,
     positions: Vec<ClickPositionPointDto>,
+    process_picker: ProcessPickerOverlayState,
     visible: bool,
     width: i32,
 }
@@ -470,6 +492,7 @@ fn configure_click_position_overlay_window(
 
 fn click_position_overlay_state(
     overlay: ClickPositionOverlayRequest,
+    process_picker: ProcessPickerOverlayState,
 ) -> ClickPositionOverlayState {
     #[cfg(target_os = "windows")]
     let (origin_x, origin_y, width, height) = {
@@ -486,9 +509,88 @@ fn click_position_overlay_state(
         origin_x,
         origin_y,
         positions: overlay.positions,
+        process_picker,
         visible: overlay.visible,
         width,
     }
+}
+
+fn stored_click_position_overlay_state(state: &AppState) -> Result<ClickPositionOverlayState, String> {
+    state
+        .click_position_overlay
+        .lock()
+        .map(|overlay| overlay.clone())
+        .map_err(|_| "Failed to lock click position overlay state".to_string())
+}
+
+fn overlay_should_be_visible(overlay_state: &ClickPositionOverlayState) -> bool {
+    overlay_state.visible || overlay_state.process_picker.active
+}
+
+#[cfg(target_os = "windows")]
+fn apply_click_position_overlay_state(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    overlay_state: &ClickPositionOverlayState,
+) -> Result<(), String> {
+    if !overlay_should_be_visible(overlay_state) {
+        if let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
+            let overlay_loaded = state
+                .click_position_overlay_loaded
+                .lock()
+                .map(|loaded| *loaded)
+                .unwrap_or(false);
+
+            let _ = configure_click_position_overlay_window(&window, overlay_state);
+            if overlay_loaded {
+                let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, overlay_state);
+            }
+            let _ = window.hide();
+        }
+
+        return Ok(());
+    }
+
+    let (window, created) = ensure_click_position_overlay_window(app)?;
+    let overlay_loaded = state
+        .click_position_overlay_loaded
+        .lock()
+        .map(|loaded| *loaded)
+        .unwrap_or(false);
+
+    configure_click_position_overlay_window(&window, overlay_state)?;
+
+    if created || !overlay_loaded {
+        return Ok(());
+    }
+
+    let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, overlay_state);
+    window
+        .show()
+        .map_err(|error| format!("Unable to show click position overlay: {error}"))?;
+
+    Ok(())
+}
+
+fn sync_click_position_overlay_state(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    overlay_state: ClickPositionOverlayState,
+) -> Result<(), String> {
+    {
+        let mut current = state
+            .click_position_overlay
+            .lock()
+            .map_err(|_| "Failed to lock click position overlay state".to_string())?;
+        *current = overlay_state.clone();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        apply_click_position_overlay_state(app, state, &overlay_state)?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -532,6 +634,94 @@ fn load_auto_clicker_settings(
 }
 
 #[tauri::command]
+fn get_foreground_process_name() -> Result<Option<String>, String> {
+    resolve_foreground_process_name()
+}
+
+#[tauri::command]
+fn list_open_app_processes() -> Result<Vec<OpenAppProcess>, String> {
+    resolve_open_app_processes()
+}
+
+#[tauri::command]
+fn list_running_process_names() -> Result<Vec<String>, String> {
+    resolve_running_process_names()
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn pick_process_name_from_click(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let window = main_window(&app)?;
+    window
+        .hide()
+        .map_err(|error| format!("Unable to hide main window for process picking: {error}"))?;
+
+    thread::sleep(Duration::from_millis(120));
+
+    let mut overlay_state = stored_click_position_overlay_state(state.inner())?;
+    overlay_state.process_picker.active = true;
+    overlay_state.process_picker.label = None;
+
+    let mut cursor = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut cursor) } != 0 {
+        overlay_state.process_picker.cursor_x = cursor.x;
+        overlay_state.process_picker.cursor_y = cursor.y;
+    }
+
+    let selection = (|| {
+        sync_click_position_overlay_state(&app, state.inner(), overlay_state.clone())?;
+
+        resolve_pick_process_name_from_click(|cursor, label| {
+            let next_label = label
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+
+            if overlay_state.process_picker.cursor_x == cursor.x
+                && overlay_state.process_picker.cursor_y == cursor.y
+                && overlay_state.process_picker.label.as_deref() == next_label.as_deref()
+            {
+                return Ok(());
+            }
+
+            overlay_state.process_picker.active = true;
+            overlay_state.process_picker.cursor_x = cursor.x;
+            overlay_state.process_picker.cursor_y = cursor.y;
+            overlay_state.process_picker.label = next_label;
+
+            sync_click_position_overlay_state(&app, state.inner(), overlay_state.clone())
+        })
+    })();
+
+    overlay_state.process_picker = ProcessPickerOverlayState::default();
+    if let Err(error) = sync_click_position_overlay_state(&app, state.inner(), overlay_state) {
+        log::warn!("unable to clear process picker overlay: {error}");
+    }
+
+    let restore_result = window
+        .show()
+        .map_err(|error| format!("Unable to restore main window after process picking: {error}"));
+    if let Err(error) = window.set_focus() {
+        log::warn!("unable to focus main window after process picking: {error}");
+    }
+
+    match (selection, restore_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn pick_process_name_from_click() -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+#[tauri::command]
 fn save_auto_clicker_settings(
     app: tauri::AppHandle,
     settings: PersistedAutoClickerSettings,
@@ -559,11 +749,7 @@ fn save_auto_clicker_settings(
 fn get_click_position_overlay_state(
     state: tauri::State<'_, AppState>,
 ) -> Result<ClickPositionOverlayState, String> {
-    state
-        .click_position_overlay
-        .lock()
-        .map(|overlay| overlay.clone())
-        .map_err(|_| "Failed to lock click position overlay state".to_string())
+    stored_click_position_overlay_state(state.inner())
 }
 
 #[cfg(target_os = "windows")]
@@ -593,56 +779,10 @@ fn sync_click_position_overlay(
     overlay: ClickPositionOverlayRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let overlay_state = click_position_overlay_state(overlay);
+    let process_picker = stored_click_position_overlay_state(state.inner())?.process_picker;
+    let overlay_state = click_position_overlay_state(overlay, process_picker);
 
-    {
-        let mut current = state
-            .click_position_overlay
-            .lock()
-            .map_err(|_| "Failed to lock click position overlay state".to_string())?;
-        *current = overlay_state.clone();
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if !overlay_state.visible {
-            if let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
-                let overlay_loaded = state
-                    .click_position_overlay_loaded
-                    .lock()
-                    .map(|loaded| *loaded)
-                    .unwrap_or(false);
-
-                let _ = configure_click_position_overlay_window(&window, &overlay_state);
-                if overlay_loaded {
-                    let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
-                }
-                let _ = window.hide();
-            }
-
-            return Ok(());
-        }
-
-        let (window, created) = ensure_click_position_overlay_window(&app)?;
-        let overlay_loaded = state
-            .click_position_overlay_loaded
-            .lock()
-            .map(|loaded| *loaded)
-            .unwrap_or(false);
-
-        configure_click_position_overlay_window(&window, &overlay_state)?;
-
-        if created || !overlay_loaded {
-            return Ok(());
-        }
-
-        let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
-        window
-            .show()
-            .map_err(|error| format!("Unable to show click position overlay: {error}"))?;
-    }
-
-    Ok(())
+    sync_click_position_overlay_state(&app, state.inner(), overlay_state)
 }
 
 #[tauri::command]
@@ -672,7 +812,7 @@ fn notify_webview_ready(
             configure_click_position_overlay_window(&window, &overlay_state)?;
             let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
 
-            if overlay_state.visible {
+            if overlay_should_be_visible(&overlay_state) {
                 window
                     .show()
                     .map_err(|error| format!("Unable to show click position overlay: {error}"))?;
@@ -979,8 +1119,12 @@ pub fn run() {
             get_auto_clicker_status,
             load_auto_clicker_settings,
             save_auto_clicker_settings,
+            get_foreground_process_name,
+            list_open_app_processes,
             get_click_position_overlay_state,
             get_current_cursor_position,
+            list_running_process_names,
+            pick_process_name_from_click,
             sync_click_position_overlay,
             notify_webview_ready,
             set_click_position_overlay_interactive,

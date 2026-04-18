@@ -87,6 +87,10 @@ export function SettingsPanelContent({
   const [isCapturingHotkey, setIsCapturingHotkey] = useState(false);
   const [isClickPositionSectionExpanded, setIsClickPositionSectionExpanded] =
     useState(false);
+  const [isClickPositionContentMounted, setIsClickPositionContentMounted] =
+    useState(false);
+  const [isClickPositionContentVisible, setIsClickPositionContentVisible] =
+    useState(false);
   const [isRateUnitDropdownOpen, setIsRateUnitDropdownOpen] = useState(false);
   const [queuedDependencyCue, setQueuedDependencyCue] =
     useState<DisabledDependencyCue | null>(null);
@@ -128,6 +132,27 @@ export function SettingsPanelContent({
     activeDependencyHighlight.flashOn;
   const dependencyHighlightClassName =
     "!bg-zinc-950 !text-white shadow-[0_0_0_1px_rgba(24,24,27,0.95),0_0_18px_rgba(24,24,27,0.2)] dark:!bg-white dark:!text-zinc-950 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]";
+
+  useEffect(() => {
+    if (isClickPositionSectionExpanded) {
+      setIsClickPositionContentMounted(true);
+    }
+  }, [isClickPositionSectionExpanded]);
+
+  useEffect(() => {
+    if (!isClickPositionContentMounted) {
+      setIsClickPositionContentVisible(false);
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setIsClickPositionContentVisible(isClickPositionSectionExpanded);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [isClickPositionContentMounted, isClickPositionSectionExpanded]);
 
   function clearHotkeyTriggerClickIgnore() {
     ignoreNextHotkeyTriggerClickRef.current = false;
@@ -1016,37 +1041,24 @@ export function SettingsPanelContent({
 
       {clickPositionControls ? (
         <div className="mt-1 border-t border-border/60 pt-3">
-          {isClickPositionSectionExpanded ? (
-            <div className="pb-2" id={clickPositionSectionId}>
-              <InlineClickPositionControls
-                onAddCenteredDot={clickPositionControls.onAddCenteredDot}
-                onClearDots={clickPositionControls.onClearDots}
-                onRemoveDot={clickPositionControls.onRemoveDot}
-                onUnavailablePress={(target) =>
-                  setQueuedDependencyCue({ target })
-                }
-                setSettings={setSettings}
-                settings={settings}
-              />
-            </div>
-          ) : null}
-
-          <div className="flex justify-start">
-            <button
-              aria-controls={clickPositionSectionId}
-              aria-expanded={isClickPositionSectionExpanded}
-              className={cn(
-                "inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-0",
-                isClickPositionActive || clickPositionDotCount > 0
-                  ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
-                  : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/65 hover:text-foreground",
-              )}
-              onClick={() =>
-                setIsClickPositionSectionExpanded((current) => !current)
-              }
-              type="button"
-            >
-              <span>Click Positions</span>
+          <button
+            aria-controls={clickPositionSectionId}
+            aria-expanded={isClickPositionSectionExpanded}
+            className={cn(
+              "flex h-10 w-full items-center justify-between rounded-lg border px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-0",
+              isClickPositionActive || clickPositionDotCount > 0
+                ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
+                : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/65 hover:text-foreground",
+            )}
+            onClick={() =>
+              setIsClickPositionSectionExpanded((current) => !current)
+            }
+            type="button"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.14em]">
+                Click Positions
+              </span>
               <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
                 {clickPositionDotLabel}
               </span>
@@ -1060,14 +1072,52 @@ export function SettingsPanelContent({
               >
                 {isClickPositionActive ? "On" : "Off"}
               </span>
-              <ChevronDownIcon
-                className={cn(
-                  "size-3.5 transition-transform duration-200",
-                  isClickPositionSectionExpanded && "rotate-180",
-                )}
-              />
-            </button>
-          </div>
+            </div>
+            <ChevronDownIcon
+              className={cn(
+                "size-3.5 shrink-0 transition-transform duration-200 ease-out",
+                isClickPositionSectionExpanded && "rotate-180",
+              )}
+            />
+          </button>
+
+          {isClickPositionContentMounted ? (
+            <div
+              aria-hidden={!isClickPositionContentVisible}
+              className={cn(
+                "grid overflow-hidden transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                isClickPositionContentVisible
+                  ? "mt-3 grid-rows-[1fr] opacity-100"
+                  : "mt-0 grid-rows-[0fr] opacity-0",
+              )}
+              onTransitionEnd={(event) => {
+                if (
+                  event.target !== event.currentTarget ||
+                  isClickPositionSectionExpanded ||
+                  isClickPositionContentVisible
+                ) {
+                  return;
+                }
+
+                setIsClickPositionContentMounted(false);
+              }}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <div className="pb-1" id={clickPositionSectionId}>
+                  <InlineClickPositionControls
+                    onAddCenteredDot={clickPositionControls.onAddCenteredDot}
+                    onClearDots={clickPositionControls.onClearDots}
+                    onRemoveDot={clickPositionControls.onRemoveDot}
+                    onUnavailablePress={(target) =>
+                      setQueuedDependencyCue({ target })
+                    }
+                    setSettings={setSettings}
+                    settings={settings}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

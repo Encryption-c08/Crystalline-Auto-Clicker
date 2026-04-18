@@ -202,6 +202,41 @@ body {
     height: 0;
     display: none;
   }
+
+  .ui-scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.24) rgba(0, 0, 0, 0.96);
+  }
+
+  .ui-scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .ui-scrollbar-thin::-webkit-scrollbar-button {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
+  .ui-scrollbar-thin::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.96);
+    border-radius: 999px;
+  }
+
+  .ui-scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.24);
+    border-radius: 999px;
+    border: 1px solid rgba(0, 0, 0, 0.98);
+  }
+
+  .ui-scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.34);
+  }
+
+  .ui-scrollbar-thin::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
 [data-tauri-drag-region] {

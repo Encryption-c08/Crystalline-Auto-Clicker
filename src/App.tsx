@@ -9,6 +9,7 @@ import type {
   DisabledDependencyTarget,
 } from "@/components/disabled-feature-dependency";
 import { DoubleClickPanel } from "@/components/double-click-panel";
+import { ProcessFilterPanel } from "@/components/process-filter-panel";
 import { LimitsPanel } from "@/components/limits-panel";
 import { SettingsPanel } from "@/components/settings-panel";
 import { TitleBar } from "@/components/title-bar";
@@ -18,7 +19,9 @@ import {
   appThemeLabels,
   appThemes,
   defaultAutoClickerSettings,
+  isProcessAllowedByRules,
   normalizeAutoClickerSettings,
+  resolveEnabledProcessRules,
 } from "@/config/settings";
 import { configureAutoClicker } from "@/lib/auto-clicker";
 import {
@@ -29,6 +32,12 @@ import {
   syncClickPositionOverlay,
 } from "@/lib/click-position-overlay";
 import { readGlobalHotkeyState } from "@/lib/global-hotkey";
+import {
+  getForegroundProcessName,
+  listOpenAppProcesses,
+  listRunningProcessNames,
+  type OpenAppProcess,
+} from "@/lib/process-filters";
 import {
   loadSavedAutoClickerSettings,
   saveAutoClickerSettings,
@@ -54,7 +63,6 @@ const ADVANCED_PANEL_MIN_WINDOW_WIDTH = 1008;
 const NON_SIMPLE_MIN_WINDOW_HEIGHT = 248;
 const SIMPLE_MIN_WINDOW_HEIGHT = 200;
 const SIMPLE_MIN_WINDOW_WIDTH = 560;
-const STANDARD_PANEL_MIN_WINDOW_WIDTH = 728;
 const ACTIVE_TAB_STORAGE_KEY = "crystalline-auto-clicker.active-tab";
 
 type AppTab = "advanced" | "settings" | "simple";
@@ -94,6 +102,10 @@ function loadInitialActiveTab(): AppTab {
   } catch {
     return "simple";
   }
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function clampSimpleWindowHeight(height: number) {
@@ -144,20 +156,11 @@ function resolveWindowTarget(
     };
   }
 
-  if (activeTab === "advanced") {
-    return {
-      minHeight: NON_SIMPLE_MIN_WINDOW_HEIGHT,
-      minWidth: ADVANCED_PANEL_MIN_WINDOW_WIDTH,
-      height: DEFAULT_WINDOW_HEIGHT,
-      width: DEFAULT_ADVANCED_WINDOW_WIDTH,
-    };
-  }
-
   return {
     minHeight: NON_SIMPLE_MIN_WINDOW_HEIGHT,
-    minWidth: STANDARD_PANEL_MIN_WINDOW_WIDTH,
+    minWidth: ADVANCED_PANEL_MIN_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
-    width: DEFAULT_STANDARD_WINDOW_WIDTH,
+    width: DEFAULT_ADVANCED_WINDOW_WIDTH,
   };
 }
 
@@ -200,6 +203,15 @@ export default function App() {
     useState<DisabledDependencyCue | null>(null);
   const [hasLoadedSettings, setHasLoadedSettings] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [focusedProcessName, setFocusedProcessName] = useState<string | null>(
+    null,
+  );
+  const [openAppProcesses, setOpenAppProcesses] = useState<OpenAppProcess[]>(
+    [],
+  );
+  const [runningProcessNames, setRunningProcessNames] = useState<string[]>([]);
+  const [processListLoading, setProcessListLoading] = useState(false);
+  const [processListError, setProcessListError] = useState<string | null>(null);
   const [simpleViewWidth, setSimpleViewWidth] = useState(0);
   const [simpleViewHeight, setSimpleViewHeight] = useState(0);
   const hasShownMainWindowRef = useRef(false);
@@ -314,6 +326,118 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let pollTimeoutId: number | null = null;
+
+    async function pollFocusedProcessName() {
+      try {
+        const nextProcessName = await getForegroundProcessName();
+        if (cancelled) {
+          return;
+        }
+
+        setFocusedProcessName((current) =>
+          current === nextProcessName ? current : nextProcessName,
+        );
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Unable to read focused process name", error);
+        }
+      } finally {
+        if (!cancelled) {
+          pollTimeoutId = window.setTimeout(() => {
+            void pollFocusedProcessName();
+          }, 250);
+        }
+      }
+    }
+
+    void pollFocusedProcessName();
+
+    return () => {
+      cancelled = true;
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "settings") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let refreshIntervalId: number | null = null;
+
+    async function refreshProcessLists(showLoadingIndicator: boolean) {
+      if (showLoadingIndicator) {
+        setProcessListLoading(true);
+      }
+
+      const [openAppsResult, allProcessesResult] = await Promise.allSettled([
+        listOpenAppProcesses(),
+        listRunningProcessNames(),
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      const nextErrors: string[] = [];
+
+      if (openAppsResult.status === "fulfilled") {
+        setOpenAppProcesses(openAppsResult.value);
+      } else {
+        console.error("Unable to list open apps", openAppsResult.reason);
+        nextErrors.push(
+          `Open apps: ${errorMessage(
+            openAppsResult.reason,
+            "Unable to list open apps.",
+          )}`,
+        );
+      }
+
+      if (allProcessesResult.status === "fulfilled") {
+        setRunningProcessNames(allProcessesResult.value);
+      } else {
+        console.error(
+          "Unable to list running processes",
+          allProcessesResult.reason,
+        );
+        nextErrors.push(
+          `All processes: ${errorMessage(
+            allProcessesResult.reason,
+            "Unable to list running processes.",
+          )}`,
+        );
+      }
+
+      setProcessListError(nextErrors.length > 0 ? nextErrors.join(" ") : null);
+
+      if (showLoadingIndicator) {
+        setProcessListLoading(false);
+      }
+    }
+
+    void refreshProcessLists(true);
+    refreshIntervalId = window.setInterval(() => {
+      void refreshProcessLists(false);
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      if (refreshIntervalId !== null) {
+        window.clearInterval(refreshIntervalId);
+      }
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
     if (!hasLoadedSettings) {
       return;
     }
@@ -344,18 +468,32 @@ export default function App() {
       return;
     }
 
+    const { blacklist, whitelist } = resolveEnabledProcessRules(settings);
+    const processRulesAllowFocusedProcess = isProcessAllowedByRules(
+      focusedProcessName,
+      whitelist,
+      blacklist,
+    );
+
     void syncClickPositionOverlay({
       editable: false,
       positions: settings.clickPositions,
       visible:
-        settings.clickPositionDotsVisible && settings.clickPositions.length > 0,
+        settings.clickPositionDotsVisible &&
+        settings.clickPositions.length > 0 &&
+        processRulesAllowFocusedProcess,
     }).catch((error) => {
       console.error("Unable to sync click position overlay", error);
     });
   }, [
+    focusedProcessName,
     hasLoadedSettings,
+    settings.processBlacklistEnabled,
+    settings.processBlacklist,
     settings.clickPositionDotsVisible,
     settings.clickPositions,
+    settings.processWhitelistEnabled,
+    settings.processWhitelist,
   ]);
 
   useEffect(() => {
@@ -666,7 +804,7 @@ export default function App() {
   );
 
   const settingsPanel = (
-    <div className="mx-auto grid w-full max-w-[30rem] gap-3">
+    <div className="mx-auto grid w-full max-w-[61rem] items-start gap-3 md:grid-cols-2">
       <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
         <div className="min-w-0 pr-2">
           <p className="text-base font-semibold text-foreground">Theme</p>
@@ -727,6 +865,17 @@ export default function App() {
           }}
         />
       </label>
+
+      <div className="md:col-span-2">
+        <ProcessFilterPanel
+          allProcessNames={runningProcessNames}
+          openAppProcesses={openAppProcesses}
+          processListError={processListError}
+          processListLoading={processListLoading}
+          setSettings={setSettings}
+          settings={settings}
+        />
+      </div>
     </div>
   );
 

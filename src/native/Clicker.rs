@@ -40,6 +40,10 @@ use clicker_calc::{
 #[cfg(target_os = "windows")]
 pub(crate) use hotkeys::read_hotkey_state;
 #[cfg(target_os = "windows")]
+use crate::process_filters::{
+    foreground_process_id, is_process_allowed, normalize_process_name_list, process_name_by_id,
+};
+#[cfg(target_os = "windows")]
 use hotkeys::{format_hotkey_label, normalize_hotkey_code, validate_hotkey_code};
 
 const DEFAULT_CLICK_LIMIT: &str = "100";
@@ -117,6 +121,8 @@ pub struct AutoClickerCommandConfig {
     pub click_rate: String,
     pub click_rate_mode: ClickRateMode,
     pub click_rate_unit: ClickRateUnit,
+    pub process_whitelist: Vec<String>,
+    pub process_blacklist: Vec<String>,
     pub hotkey_code: String,
     pub hotkey_label: String,
     pub interval_ms: u64,
@@ -156,6 +162,8 @@ impl Default for AutoClickerCommandConfig {
             click_rate: "25".into(),
             click_rate_mode: ClickRateMode::Per,
             click_rate_unit: ClickRateUnit::S,
+            process_whitelist: Vec::new(),
+            process_blacklist: Vec::new(),
             hotkey_code: String::new(),
             hotkey_label: "Unbound".into(),
             interval_ms: 40,
@@ -334,6 +342,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
         let mut next_click_position_index = 0_usize;
         let mut last_schedule_config: Option<AutoClickerCommandConfig> = None;
         let mut next_click_at: Option<Instant> = None;
+        let mut last_process_filter_process_id: Option<u32> = None;
+        let mut last_process_filter_allowed = true;
 
         loop {
             if shared.shutdown.load(Ordering::Relaxed) {
@@ -359,6 +369,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 next_click_position_index = 0;
                 last_schedule_config = Some(config.clone());
                 next_click_at = None;
+                last_process_filter_process_id = None;
+                last_process_filter_allowed = true;
             }
 
             let cadence_result = match config.mouse_action {
@@ -456,14 +468,29 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .as_ref()
                 .map(|active| *active)
                 .unwrap_or(false);
+            let process_filter_result = if paused_for_app_window
+                || !process_filters_active_from_config(&config)
+            {
+                Ok(true)
+            } else {
+                process_filters_allow_foreground_process(
+                    &config,
+                    &mut last_process_filter_process_id,
+                    &mut last_process_filter_allowed,
+                    config_changed,
+                )
+            };
+            let process_filter_allowed = process_filter_result.as_ref().copied().unwrap_or(false);
             let hotkey_uses_output_mouse_button =
                 hotkey_includes_mouse_button(&config.hotkey_code, config.mouse_button);
             let waiting_for_hotkey_release = clicker_enabled
                 && hotkey_pressed
                 && hotkey_uses_output_mouse_button
                 && matches!(config.click_mode, ClickMode::Toggle);
-            let can_dispatch_clicks =
-                clicker_enabled && !paused_for_app_window && !waiting_for_hotkey_release;
+            let can_dispatch_clicks = clicker_enabled
+                && !paused_for_app_window
+                && process_filter_allowed
+                && !waiting_for_hotkey_release;
 
             let time_limit_expired = if can_dispatch_clicks {
                 if let Some(remaining_time_limit) = remaining_time_limit.as_mut() {
@@ -727,6 +754,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     .or_else(|| click_limit_result.err())
                     .or_else(|| time_limit_result.err())
                     .or_else(|| app_window_active_result.err())
+                    .or_else(|| process_filter_result.err())
                     .or(click_result);
             }
 
@@ -819,6 +847,11 @@ fn normalize_auto_clicker_config(
 ) -> Result<AutoClickerCommandConfig, String> {
     config.hotkey_code = normalize_hotkey_code(&config.hotkey_code)?;
     config.hotkey_label = format_hotkey_label(&config.hotkey_code)?;
+    config.process_whitelist = normalize_process_name_list(&config.process_whitelist);
+    config.process_blacklist = normalize_process_name_list(&config.process_blacklist);
+    config
+        .process_blacklist
+        .retain(|rule| !config.process_whitelist.iter().any(|item| item == rule));
     if config.double_click_enabled && matches!(config.mouse_action, MouseAction::Click) {
         config.double_click_delay = normalize_double_click_delay_value(&config.double_click_delay)?;
     }
@@ -843,6 +876,45 @@ fn clicks_per_cycle_from_config(config: &AutoClickerCommandConfig) -> usize {
     } else {
         1
     }
+}
+
+#[cfg(target_os = "windows")]
+fn process_filters_active_from_config(config: &AutoClickerCommandConfig) -> bool {
+    !config.process_whitelist.is_empty() || !config.process_blacklist.is_empty()
+}
+
+#[cfg(target_os = "windows")]
+fn process_filters_allow_foreground_process(
+    config: &AutoClickerCommandConfig,
+    last_process_id: &mut Option<u32>,
+    last_process_allowed: &mut bool,
+    force_refresh: bool,
+) -> Result<bool, String> {
+    if !process_filters_active_from_config(config) {
+        *last_process_id = None;
+        *last_process_allowed = true;
+        return Ok(true);
+    }
+
+    let foreground_process_id = foreground_process_id();
+    if !force_refresh && foreground_process_id == *last_process_id {
+        return Ok(*last_process_allowed);
+    }
+
+    let foreground_process_name = match foreground_process_id {
+        Some(process_id) => process_name_by_id(process_id)?,
+        None => None,
+    };
+    let process_allowed = is_process_allowed(
+        foreground_process_name.as_deref(),
+        &config.process_whitelist,
+        &config.process_blacklist,
+    );
+
+    *last_process_id = foreground_process_id;
+    *last_process_allowed = process_allowed;
+
+    Ok(process_allowed)
 }
 
 #[cfg(target_os = "windows")]

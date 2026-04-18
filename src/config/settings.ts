@@ -21,6 +21,10 @@ export type ClickPosition = {
 export type AutoClickerSettings = {
   theme: AppTheme;
   closeToTray: boolean;
+  processWhitelistEnabled: boolean;
+  processWhitelist: string[];
+  processBlacklistEnabled: boolean;
+  processBlacklist: string[];
   clickMode: ClickMode;
   clickRate: string;
   clickRateMode: ClickRateMode;
@@ -59,6 +63,10 @@ export type SavedClickPosition = {
 export type SavedAutoClickerSettings = {
   theme?: string | null;
   closeToTray?: boolean | null;
+  processWhitelistEnabled?: boolean | null;
+  processWhitelist?: string[] | null;
+  processBlacklistEnabled?: boolean | null;
+  processBlacklist?: string[] | null;
   clickMode?: string | null;
   clickRate?: string | null;
   clickRateMode?: string | null;
@@ -127,6 +135,10 @@ export const mouseActionLabels: Record<MouseActionOption, string> = {
 export const defaultAutoClickerSettings: AutoClickerSettings = {
   theme: "dark",
   closeToTray: false,
+  processWhitelistEnabled: true,
+  processWhitelist: [],
+  processBlacklistEnabled: true,
+  processBlacklist: [],
   clickMode: "hold",
   clickRate: "25",
   clickRateMode: "per",
@@ -215,6 +227,89 @@ function normalizeClickPositions(
   return normalizedPositions;
 }
 
+export function normalizeProcessRuleName(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue === "") {
+    return null;
+  }
+
+  const basename = trimmedValue.replace(/^.*[\\/]/, "").toLowerCase();
+  if (basename === "") {
+    return null;
+  }
+
+  return basename.includes(".") ? basename : `${basename}.exe`;
+}
+
+export function normalizeProcessRuleList(
+  values: string[] | null | undefined,
+): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const normalizedRules: string[] = [];
+  const seenRules = new Set<string>();
+
+  for (const value of values) {
+    const normalizedValue = normalizeProcessRuleName(value);
+    if (!normalizedValue || seenRules.has(normalizedValue)) {
+      continue;
+    }
+
+    seenRules.add(normalizedValue);
+    normalizedRules.push(normalizedValue);
+  }
+
+  return normalizedRules;
+}
+
+export function isProcessAllowedByRules(
+  processName: string | null | undefined,
+  whitelist: readonly string[],
+  blacklist: readonly string[],
+) {
+  const normalizedProcessName = normalizeProcessRuleName(processName);
+
+  if (whitelist.length > 0) {
+    return (
+      normalizedProcessName !== null &&
+      whitelist.includes(normalizedProcessName)
+    );
+  }
+
+  if (normalizedProcessName === null) {
+    return true;
+  }
+
+  return !blacklist.includes(normalizedProcessName);
+}
+
+export function resolveEnabledProcessRules(
+  options: Pick<
+    AutoClickerSettings,
+    | "processWhitelist"
+    | "processWhitelistEnabled"
+    | "processBlacklist"
+    | "processBlacklistEnabled"
+  >,
+) {
+  const whitelist = options.processWhitelistEnabled
+    ? normalizeProcessRuleList(options.processWhitelist)
+    : [];
+  const blacklist = (
+    options.processBlacklistEnabled
+      ? normalizeProcessRuleList(options.processBlacklist)
+      : []
+  ).filter((processName) => !whitelist.includes(processName));
+
+  return { blacklist, whitelist };
+}
+
 export function getClickRateUnitsForMode(mode: ClickRateMode) {
   return mode === "every" ? clickRateEveryUnits : clickRatePerUnits;
 }
@@ -250,6 +345,16 @@ export function normalizeAutoClickerSettings(
   const normalizedClickPositions = normalizeClickPositions(
     settings?.clickPositions,
   );
+  const processWhitelistEnabled =
+    typeof settings?.processWhitelistEnabled === "boolean"
+      ? settings.processWhitelistEnabled
+      : defaultAutoClickerSettings.processWhitelistEnabled;
+  const processBlacklistEnabled =
+    typeof settings?.processBlacklistEnabled === "boolean"
+      ? settings.processBlacklistEnabled
+      : defaultAutoClickerSettings.processBlacklistEnabled;
+  const processWhitelist = normalizeProcessRuleList(settings?.processWhitelist);
+  const processBlacklist = normalizeProcessRuleList(settings?.processBlacklist);
 
   return {
     theme: resolveOption(
@@ -261,6 +366,10 @@ export function normalizeAutoClickerSettings(
       typeof settings?.closeToTray === "boolean"
         ? settings.closeToTray
         : defaultAutoClickerSettings.closeToTray,
+    processWhitelistEnabled,
+    processWhitelist,
+    processBlacklistEnabled,
+    processBlacklist,
     clickMode: resolveOption(
       settings?.clickMode,
       clickModes,
