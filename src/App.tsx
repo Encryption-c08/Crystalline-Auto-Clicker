@@ -1,114 +1,119 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { listen } from "@tauri-apps/api/event"
-import { Settings2Icon } from "lucide-react"
+import { listen } from "@tauri-apps/api/event";
+import { Settings2Icon } from "lucide-react";
 
-import { ClickPositionPanel } from "@/components/click-position-panel"
-import { ClickDurationPanel } from "@/components/click-duration-panel"
+import { ClickDurationPanel } from "@/components/click-duration-panel";
 import type {
   DisabledDependencyCue,
   DisabledDependencyTarget,
-} from "@/components/disabled-feature-dependency"
-import { ClickLimitPanel } from "@/components/click-limit-panel"
-import { DoubleClickPanel } from "@/components/double-click-panel"
-import { SettingsPanel } from "@/components/settings-panel"
-import { TimeLimitPanel } from "@/components/time-limit-panel"
-import { TitleBar } from "@/components/title-bar"
-import { buildAutoClickerConfig } from "@/config/runtime"
-import type { AutoClickerSettings } from "@/config/settings"
+} from "@/components/disabled-feature-dependency";
+import { DoubleClickPanel } from "@/components/double-click-panel";
+import { LimitsPanel } from "@/components/limits-panel";
+import { SettingsPanel } from "@/components/settings-panel";
+import { TitleBar } from "@/components/title-bar";
+import { buildAutoClickerConfig } from "@/config/runtime";
+import type { AutoClickerSettings } from "@/config/settings";
 import {
   appThemeLabels,
   appThemes,
   defaultAutoClickerSettings,
   normalizeAutoClickerSettings,
-} from "@/config/settings"
-import { configureAutoClicker } from "@/lib/auto-clicker"
+} from "@/config/settings";
+import { configureAutoClicker } from "@/lib/auto-clicker";
 import {
   CLICK_POSITION_OVERLAY_MOVE_EVENT,
   type ClickPositionOverlayMoveEvent,
   getClickPositionOverlayState,
   getCurrentCursorPosition,
   syncClickPositionOverlay,
-} from "@/lib/click-position-overlay"
-import { readGlobalHotkeyState } from "@/lib/global-hotkey"
+} from "@/lib/click-position-overlay";
+import { readGlobalHotkeyState } from "@/lib/global-hotkey";
 import {
   loadSavedAutoClickerSettings,
   saveAutoClickerSettings,
-} from "@/lib/settings-store"
-import { matchesKeyboardEventHotkey } from "@/input/hotkeys"
-import { isTauri, trackedInvoke } from "@/lib/tauri"
-import { useTheme } from "@tauri-ui/components/theme-provider.tsx"
-import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
-import { cn } from "@tauri-ui/lib/utils"
+} from "@/lib/settings-store";
+import { matchesKeyboardEventHotkey } from "@/input/hotkeys";
+import { isTauri, trackedInvoke } from "@/lib/tauri";
+import { useTheme } from "@tauri-ui/components/theme-provider.tsx";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@tauri-ui/components/ui/toggle-group";
+import { Checkbox } from "@tauri-ui/components/ui/checkbox";
+import { cn } from "@tauri-ui/lib/utils";
 
-const DEFAULT_WINDOW_SIZE = {
-  height: 680,
-  width: 760,
-}
-const TITLE_BAR_HEIGHT = 44
-const DOCK_HEIGHT = 44
-const SIMPLE_VIEW_HORIZONTAL_PADDING = 24
-const SIMPLE_VIEW_VERTICAL_PADDING = 24
-const ADVANCED_PANEL_MIN_WINDOW_WIDTH = 728
-const NON_SIMPLE_MIN_WINDOW_HEIGHT = 248
-const SIMPLE_MIN_WINDOW_HEIGHT = 200
-const SIMPLE_MIN_WINDOW_WIDTH = 560
-const ACTIVE_TAB_STORAGE_KEY = "crystalline-auto-clicker.active-tab"
+const DEFAULT_WINDOW_HEIGHT = 680;
+const DEFAULT_ADVANCED_WINDOW_WIDTH = 1024;
+const DEFAULT_STANDARD_WINDOW_WIDTH = 760;
+const TITLE_BAR_HEIGHT = 44;
+const DOCK_HEIGHT = 44;
+const SIMPLE_VIEW_HORIZONTAL_PADDING = 24;
+const SIMPLE_VIEW_VERTICAL_PADDING = 24;
+const ADVANCED_PANEL_MIN_WINDOW_WIDTH = 1008;
+const NON_SIMPLE_MIN_WINDOW_HEIGHT = 248;
+const SIMPLE_MIN_WINDOW_HEIGHT = 200;
+const SIMPLE_MIN_WINDOW_WIDTH = 560;
+const STANDARD_PANEL_MIN_WINDOW_WIDTH = 728;
+const ACTIVE_TAB_STORAGE_KEY = "crystalline-auto-clicker.active-tab";
 
-type AppTab = "advanced" | "settings" | "simple"
+type AppTab = "advanced" | "settings" | "simple";
 
 function isEditableElement(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
-    return false
+    return false;
   }
 
   if (target.isContentEditable) {
-    return true
+    return true;
   }
 
   return Boolean(
-    target.closest("input, textarea, select, [contenteditable='true']")
-  )
+    target.closest("input, textarea, select, [contenteditable='true']"),
+  );
 }
 
 function normalizeAppTab(value: string | null | undefined): AppTab | null {
   if (value === "simple" || value === "advanced" || value === "settings") {
-    return value
+    return value;
   }
 
-  return null
+  return null;
 }
 
 function loadInitialActiveTab(): AppTab {
   if (typeof window === "undefined") {
-    return "simple"
+    return "simple";
   }
 
   try {
-    return normalizeAppTab(window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)) ?? "simple"
+    return (
+      normalizeAppTab(window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)) ??
+      "simple"
+    );
   } catch {
-    return "simple"
+    return "simple";
   }
 }
 
 function clampSimpleWindowHeight(height: number) {
   return Math.max(
     SIMPLE_MIN_WINDOW_HEIGHT,
-    Math.min(DEFAULT_WINDOW_SIZE.height, height)
-  )
+    Math.min(DEFAULT_WINDOW_HEIGHT, height),
+  );
 }
 
 function clampSimpleWindowWidth(width: number) {
   return Math.max(
     SIMPLE_MIN_WINDOW_WIDTH,
-    Math.min(DEFAULT_WINDOW_SIZE.width, width)
-  )
+    Math.min(DEFAULT_STANDARD_WINDOW_WIDTH, width),
+  );
 }
 
 function resolveSimpleWindowWidth(contentWidth: number) {
   return clampSimpleWindowWidth(
-    Math.ceil(contentWidth + SIMPLE_VIEW_HORIZONTAL_PADDING)
-  )
+    Math.ceil(contentWidth + SIMPLE_VIEW_HORIZONTAL_PADDING),
+  );
 }
 
 function resolveSimpleWindowHeight(contentHeight: number) {
@@ -117,34 +122,43 @@ function resolveSimpleWindowHeight(contentHeight: number) {
       contentHeight +
         SIMPLE_VIEW_VERTICAL_PADDING +
         TITLE_BAR_HEIGHT +
-        DOCK_HEIGHT
-    )
-  )
+        DOCK_HEIGHT,
+    ),
+  );
 }
 
 function resolveWindowTarget(
   activeTab: AppTab,
   simpleViewWidth: number,
-  simpleViewHeight: number
+  simpleViewHeight: number,
 ) {
   if (activeTab === "simple") {
-    const width = resolveSimpleWindowWidth(simpleViewWidth)
-    const height = resolveSimpleWindowHeight(simpleViewHeight)
+    const width = resolveSimpleWindowWidth(simpleViewWidth);
+    const height = resolveSimpleWindowHeight(simpleViewHeight);
 
     return {
       minHeight: height,
       minWidth: width,
       height,
       width,
-    }
+    };
+  }
+
+  if (activeTab === "advanced") {
+    return {
+      minHeight: NON_SIMPLE_MIN_WINDOW_HEIGHT,
+      minWidth: ADVANCED_PANEL_MIN_WINDOW_WIDTH,
+      height: DEFAULT_WINDOW_HEIGHT,
+      width: DEFAULT_ADVANCED_WINDOW_WIDTH,
+    };
   }
 
   return {
     minHeight: NON_SIMPLE_MIN_WINDOW_HEIGHT,
-    minWidth: ADVANCED_PANEL_MIN_WINDOW_WIDTH,
-    height: DEFAULT_WINDOW_SIZE.height,
-    width: DEFAULT_WINDOW_SIZE.width,
-  }
+    minWidth: STANDARD_PANEL_MIN_WINDOW_WIDTH,
+    height: DEFAULT_WINDOW_HEIGHT,
+    width: DEFAULT_STANDARD_WINDOW_WIDTH,
+  };
 }
 
 function DockButton({
@@ -153,10 +167,10 @@ function DockButton({
   className,
   onClick,
 }: {
-  active: boolean
-  children: React.ReactNode
-  className?: string
-  onClick: () => void
+  active: boolean;
+  children: React.ReactNode;
+  className?: string;
+  onClick: () => void;
 }) {
   return (
     <button
@@ -166,36 +180,37 @@ function DockButton({
         active
           ? "bg-muted-foreground/16 text-foreground"
           : "text-muted-foreground hover:bg-muted-foreground/10 hover:text-foreground",
-        className
+        className,
       )}
       onClick={onClick}
       type="button"
     >
       {children}
     </button>
-  )
+  );
 }
 
 export default function App() {
-  const { setTheme, theme } = useTheme()
+  const { setTheme, theme } = useTheme();
   const [settings, setSettings] = useState<AutoClickerSettings>(
-    defaultAutoClickerSettings
-  )
-  const [activeTab, setActiveTab] = useState<AppTab>(loadInitialActiveTab)
+    defaultAutoClickerSettings,
+  );
+  const [activeTab, setActiveTab] = useState<AppTab>(loadInitialActiveTab);
   const [disabledDependencyCue, setDisabledDependencyCue] =
-    useState<DisabledDependencyCue | null>(null)
-  const [hasLoadedSettings, setHasLoadedSettings] = useState(false)
-  const [runtimeError, setRuntimeError] = useState<string | null>(null)
-  const [simpleViewWidth, setSimpleViewWidth] = useState(0)
-  const [simpleViewHeight, setSimpleViewHeight] = useState(0)
-  const simplePanelMeasureRef = useRef<HTMLDivElement | null>(null)
+    useState<DisabledDependencyCue | null>(null);
+  const [hasLoadedSettings, setHasLoadedSettings] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [simpleViewWidth, setSimpleViewWidth] = useState(0);
+  const [simpleViewHeight, setSimpleViewHeight] = useState(0);
+  const hasShownMainWindowRef = useRef(false);
+  const simplePanelMeasureRef = useRef<HTMLDivElement | null>(null);
 
   function highlightDisabledDependency(target: DisabledDependencyTarget) {
-    setDisabledDependencyCue({ target })
+    setDisabledDependencyCue({ target });
   }
 
   function clearDisabledDependencyCue() {
-    setDisabledDependencyCue(null)
+    setDisabledDependencyCue(null);
   }
 
   function appendClickPosition(x: number, y: number) {
@@ -203,8 +218,8 @@ export default function App() {
       const nextId =
         current.clickPositions.reduce(
           (maxId, position) => Math.max(maxId, position.id),
-          0
-        ) + 1
+          0,
+        ) + 1;
 
       return {
         ...current,
@@ -216,47 +231,47 @@ export default function App() {
             y: Math.round(y),
           },
         ],
-      }
-    })
+      };
+    });
   }
 
   async function addCenteredClickPosition() {
     try {
-      const overlayState = await getClickPositionOverlayState()
+      const overlayState = await getClickPositionOverlayState();
       const centerX =
         overlayState.originX +
-        Math.round((overlayState.width || window.screen.availWidth) / 2)
+        Math.round((overlayState.width || window.screen.availWidth) / 2);
       const centerY =
         overlayState.originY +
-        Math.round((overlayState.height || window.screen.availHeight) / 2)
+        Math.round((overlayState.height || window.screen.availHeight) / 2);
 
-      appendClickPosition(centerX, centerY)
+      appendClickPosition(centerX, centerY);
     } catch (error) {
-      console.error("Unable to add centered click position", error)
+      console.error("Unable to add centered click position", error);
     }
   }
 
   function removeMostRecentClickPosition() {
     setSettings((current) => {
       if (current.clickPositions.length === 0) {
-        return current
+        return current;
       }
 
       const highestId = current.clickPositions.reduce(
         (maxId, position) => Math.max(maxId, position.id),
-        0
-      )
+        0,
+      );
       const nextPositions = current.clickPositions.filter(
-        (position) => position.id !== highestId
-      )
+        (position) => position.id !== highestId,
+      );
 
       return {
         ...current,
         clickPositionEnabled:
           nextPositions.length > 0 ? current.clickPositionEnabled : false,
         clickPositions: nextPositions,
-      }
-    })
+      };
+    });
   }
 
   function clearAllClickPositions() {
@@ -264,69 +279,69 @@ export default function App() {
       ...current,
       clickPositionEnabled: false,
       clickPositions: [],
-    }))
+    }));
   }
 
   useEffect(() => {
     if (theme !== settings.theme) {
-      setTheme(settings.theme)
+      setTheme(settings.theme);
     }
-  }, [setTheme, settings.theme, theme])
+  }, [setTheme, settings.theme, theme]);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
 
     void loadSavedAutoClickerSettings()
       .then((savedSettings) => {
         if (cancelled) {
-          return
+          return;
         }
 
-        setSettings(normalizeAutoClickerSettings(savedSettings))
+        setSettings(normalizeAutoClickerSettings(savedSettings));
       })
       .catch((error) => {
-        console.error("Unable to load saved settings", error)
+        console.error("Unable to load saved settings", error);
       })
       .finally(() => {
         if (!cancelled) {
-          setHasLoadedSettings(true)
+          setHasLoadedSettings(true);
         }
-      })
+      });
 
     return () => {
-      cancelled = true
-    }
-  }, [])
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!hasLoadedSettings) {
-      return
+      return;
     }
 
     const timeoutId = window.setTimeout(() => {
       void configureAutoClicker(buildAutoClickerConfig(settings))
         .then(() => {
-          setRuntimeError(null)
+          setRuntimeError(null);
         })
         .catch((error) => {
           const message =
-            error instanceof Error ? error.message : "Unable to start clicker"
-          setRuntimeError(message)
-        })
+            error instanceof Error ? error.message : "Unable to start clicker";
+          setRuntimeError(message);
+        });
 
       void saveAutoClickerSettings(settings).catch((error) => {
-        console.error("Unable to save settings", error)
-      })
-    }, 100)
+        console.error("Unable to save settings", error);
+      });
+    }, 100);
 
     return () => {
-      window.clearTimeout(timeoutId)
-    }
-  }, [hasLoadedSettings, settings])
+      window.clearTimeout(timeoutId);
+    };
+  }, [hasLoadedSettings, settings]);
 
   useEffect(() => {
     if (!hasLoadedSettings) {
-      return
+      return;
     }
 
     void syncClickPositionOverlay({
@@ -335,27 +350,27 @@ export default function App() {
       visible:
         settings.clickPositionDotsVisible && settings.clickPositions.length > 0,
     }).catch((error) => {
-      console.error("Unable to sync click position overlay", error)
-    })
+      console.error("Unable to sync click position overlay", error);
+    });
   }, [
     hasLoadedSettings,
     settings.clickPositionDotsVisible,
     settings.clickPositions,
-  ])
+  ]);
 
   useEffect(() => {
     if (!isTauri()) {
-      return undefined
+      return undefined;
     }
 
-    let cancelled = false
-    let dispose: (() => void) | undefined
+    let cancelled = false;
+    let dispose: (() => void) | undefined;
 
     void listen<ClickPositionOverlayMoveEvent>(
       CLICK_POSITION_OVERLAY_MOVE_EVENT,
       (event) => {
         if (cancelled) {
-          return
+          return;
         }
 
         setSettings((current) => ({
@@ -367,231 +382,276 @@ export default function App() {
                   x: Math.round(event.payload.x),
                   y: Math.round(event.payload.y),
                 }
-              : position
+              : position,
           ),
-        }))
-      }
+        }));
+      },
     ).then((unlisten) => {
       if (cancelled) {
-        unlisten()
-        return
+        unlisten();
+        return;
       }
 
-      dispose = unlisten
-    })
+      dispose = unlisten;
+    });
 
     return () => {
-      cancelled = true
-      dispose?.()
-    }
-  }, [])
+      cancelled = true;
+      dispose?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!hasLoadedSettings) {
-      return undefined
+      return undefined;
     }
 
     if (!isTauri()) {
-      return undefined
+      return undefined;
     }
 
-    const hotkeyCode = settings.clickPositionHotkey.code.trim()
+    const hotkeyCode = settings.clickPositionHotkey.code.trim();
     if (hotkeyCode === "") {
-      return undefined
+      return undefined;
     }
 
-    let cancelled = false
-    let pollTimeoutId: number | null = null
-    let lastPressed = false
+    let cancelled = false;
+    let pollTimeoutId: number | null = null;
+    let lastPressed = false;
 
     async function addCursorDotFromGlobalHotkey() {
       try {
-        const cursorPosition = await getCurrentCursorPosition()
+        const cursorPosition = await getCurrentCursorPosition();
         if (cancelled) {
-          return
+          return;
         }
 
-        appendClickPosition(cursorPosition.x, cursorPosition.y)
+        appendClickPosition(cursorPosition.x, cursorPosition.y);
       } catch (error) {
-        console.error("Unable to add click position at cursor", error)
+        console.error("Unable to add click position at cursor", error);
       }
     }
 
     async function pollHotkeyState() {
       try {
-        const activeElement = document.activeElement
+        const activeElement = document.activeElement;
         const isCapturingDotHotkey =
           activeElement instanceof HTMLElement &&
-          activeElement.hasAttribute("data-click-position-hotkey-capture")
+          activeElement.hasAttribute("data-click-position-hotkey-capture");
         const isPressed = isCapturingDotHotkey
           ? false
-          : await readGlobalHotkeyState(hotkeyCode)
+          : await readGlobalHotkeyState(hotkeyCode);
 
         if (cancelled) {
-          return
+          return;
         }
 
         if (isPressed && !lastPressed) {
-          lastPressed = true
-          void addCursorDotFromGlobalHotkey()
+          lastPressed = true;
+          void addCursorDotFromGlobalHotkey();
         } else if (!isPressed) {
-          lastPressed = false
+          lastPressed = false;
         }
       } catch (error) {
         if (!cancelled) {
-          console.error("Unable to poll global click-position hotkey", error)
+          console.error("Unable to poll global click-position hotkey", error);
         }
-        lastPressed = false
+        lastPressed = false;
       } finally {
         if (!cancelled) {
           pollTimeoutId = window.setTimeout(() => {
-            void pollHotkeyState()
-          }, 25)
+            void pollHotkeyState();
+          }, 25);
         }
       }
     }
 
-    void pollHotkeyState()
+    void pollHotkeyState();
 
     return () => {
-      cancelled = true
+      cancelled = true;
       if (pollTimeoutId !== null) {
-        window.clearTimeout(pollTimeoutId)
+        window.clearTimeout(pollTimeoutId);
       }
-    }
-  }, [hasLoadedSettings, settings.clickPositionHotkey.code])
+    };
+  }, [hasLoadedSettings, settings.clickPositionHotkey.code]);
 
   useEffect(() => {
-    const hotkeyCode = settings.clickPositionHotkey.code.trim()
+    function handleReservedBrowserShortcut(event: KeyboardEvent) {
+      if (
+        !["F3", "F7"].includes(event.key) ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+    }
+
+    window.addEventListener("keydown", handleReservedBrowserShortcut, true);
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleReservedBrowserShortcut,
+        true,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    const hotkeyCode = settings.clickPositionHotkey.code.trim();
     if (hotkeyCode === "") {
-      return undefined
+      return undefined;
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (isEditableElement(event.target)) {
-        return
+        return;
       }
 
-      const activeElement = document.activeElement
+      const activeElement = document.activeElement;
       const isCapturingDotHotkey =
         activeElement instanceof HTMLElement &&
-        activeElement.hasAttribute("data-click-position-hotkey-capture")
+        activeElement.hasAttribute("data-click-position-hotkey-capture");
       if (isCapturingDotHotkey) {
-        return
+        return;
       }
 
       if (!matchesKeyboardEventHotkey(event, hotkeyCode)) {
-        return
+        return;
       }
 
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
     }
 
-    window.addEventListener("keydown", handleKeyDown, true)
+    window.addEventListener("keydown", handleKeyDown, true);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown, true)
-    }
-  }, [settings.clickPositionHotkey.code])
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [settings.clickPositionHotkey.code]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab)
+      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
     } catch (error) {
-      console.warn("Unable to persist active tab", error)
+      console.warn("Unable to persist active tab", error);
     }
-  }, [activeTab])
+  }, [activeTab]);
 
   useLayoutEffect(() => {
     if (activeTab !== "simple" || !simplePanelMeasureRef.current) {
-      return undefined
+      return undefined;
     }
 
-    const element = simplePanelMeasureRef.current
+    const element = simplePanelMeasureRef.current;
 
     function updateSimpleViewSize() {
-      const { height, width } = element.getBoundingClientRect()
-      setSimpleViewHeight(Math.ceil(height))
-      setSimpleViewWidth(Math.ceil(width))
+      const { height, width } = element.getBoundingClientRect();
+      setSimpleViewHeight(Math.ceil(height));
+      setSimpleViewWidth(Math.ceil(width));
     }
 
-    updateSimpleViewSize()
+    updateSimpleViewSize();
 
     const resizeObserver = new ResizeObserver(() => {
-      updateSimpleViewSize()
-    })
+      updateSimpleViewSize();
+    });
 
-    resizeObserver.observe(element)
+    resizeObserver.observe(element);
 
     return () => {
-      resizeObserver.disconnect()
-    }
-  }, [activeTab])
+      resizeObserver.disconnect();
+    };
+  }, [activeTab]);
 
   useEffect(() => {
     if (!isTauri()) {
-      return undefined
+      return undefined;
     }
 
-    if (activeTab === "simple" && (simpleViewHeight === 0 || simpleViewWidth === 0)) {
-      return undefined
+    if (
+      activeTab === "simple" &&
+      (simpleViewHeight === 0 || simpleViewWidth === 0)
+    ) {
+      return undefined;
     }
 
-    const target = resolveWindowTarget(activeTab, simpleViewWidth, simpleViewHeight)
-    let cancelled = false
-    let retryTimeoutId: number | null = null
+    const target = resolveWindowTarget(
+      activeTab,
+      simpleViewWidth,
+      simpleViewHeight,
+    );
+    let cancelled = false;
+    let retryTimeoutId: number | null = null;
+
+    async function ensureMainWindowVisible() {
+      if (cancelled || hasShownMainWindowRef.current) {
+        return;
+      }
+
+      try {
+        await trackedInvoke<void>("notify_webview_ready");
+        hasShownMainWindowRef.current = true;
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Unable to show main window after frame sync", error);
+        }
+      }
+    }
 
     async function syncWindowFrame(attempt = 0) {
       try {
         if (cancelled) {
-          return
+          return;
         }
 
         await trackedInvoke<void>("sync_main_window_frame", {
           frame: {
+            animate: hasShownMainWindowRef.current,
             height: target.height,
             minHeight: target.minHeight,
             minWidth: target.minWidth,
             width: target.width,
           },
-        })
+        });
+
+        await ensureMainWindowVisible();
       } catch (error) {
         if (!cancelled && attempt < 8) {
           retryTimeoutId = window.setTimeout(() => {
-            void syncWindowFrame(attempt + 1)
-          }, 60)
-          return
+            void syncWindowFrame(attempt + 1);
+          }, 60);
+          return;
         }
 
         if (!cancelled) {
-          console.error("Unable to sync window frame", error)
+          console.error("Unable to sync window frame", error);
         }
+
+        await ensureMainWindowVisible();
       }
     }
 
     retryTimeoutId = window.setTimeout(() => {
-      void syncWindowFrame()
-    }, 40)
+      void syncWindowFrame();
+    }, 40);
 
     return () => {
-      cancelled = true
+      cancelled = true;
       if (retryTimeoutId !== null) {
-        window.clearTimeout(retryTimeoutId)
+        window.clearTimeout(retryTimeoutId);
       }
-    }
-  }, [activeTab, simpleViewHeight, simpleViewWidth])
+    };
+  }, [activeTab, simpleViewHeight, simpleViewWidth]);
 
   const advancedPanels = (
-    <div className="flex w-full max-w-[30rem] flex-col items-stretch gap-3">
-      <ClickPositionPanel
-        onAddCenteredDot={() => void addCenteredClickPosition()}
-        onClearDots={clearAllClickPositions}
-        onRemoveDot={removeMostRecentClickPosition}
-        onUnavailablePress={highlightDisabledDependency}
-        setSettings={setSettings}
-        settings={settings}
-      />
+    <div className="grid w-full grid-cols-2 items-start gap-3">
       <DoubleClickPanel
         onUnavailablePress={highlightDisabledDependency}
         setSettings={setSettings}
@@ -602,21 +662,11 @@ export default function App() {
         setSettings={setSettings}
         settings={settings}
       />
-      <ClickLimitPanel
-        onUnavailablePress={highlightDisabledDependency}
-        setSettings={setSettings}
-        settings={settings}
-      />
-      <TimeLimitPanel
-        onUnavailablePress={highlightDisabledDependency}
-        setSettings={setSettings}
-        settings={settings}
-      />
     </div>
-  )
+  );
 
   const settingsPanel = (
-    <div className="mx-auto w-full max-w-[30rem]">
+    <div className="mx-auto grid w-full max-w-[30rem] gap-3">
       <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
         <div className="min-w-0 pr-2">
           <p className="text-base font-semibold text-foreground">Theme</p>
@@ -629,13 +679,13 @@ export default function App() {
           className="shrink-0 overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
           onValueChange={(value) => {
             if (!value) {
-              return
+              return;
             }
 
             setSettings((current) => ({
               ...current,
               theme: value as AutoClickerSettings["theme"],
-            }))
+            }));
           }}
           size="sm"
           type="single"
@@ -654,12 +704,35 @@ export default function App() {
           ))}
         </ToggleGroup>
       </div>
+
+      <label className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors hover:bg-card/45">
+        <div className="min-w-0 pr-2">
+          <p className="text-base font-semibold text-foreground">
+            Close to Tray
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Hide the app to the system tray when it is minimized.
+          </p>
+        </div>
+
+        <Checkbox
+          aria-label="Enable close to tray"
+          checked={settings.closeToTray}
+          className="shrink-0"
+          onCheckedChange={(checked) => {
+            setSettings((current) => ({
+              ...current,
+              closeToTray: checked === true,
+            }));
+          }}
+        />
+      </label>
     </div>
-  )
+  );
 
   return (
     <div className="h-screen overflow-hidden bg-background">
-      <TitleBar />
+      <TitleBar closeToTrayEnabled={settings.closeToTray} />
 
       <div className="flex h-full flex-col pt-11">
         <div className="min-h-0 flex-1 overflow-hidden">
@@ -680,14 +753,26 @@ export default function App() {
             </div>
           ) : activeTab === "advanced" ? (
             <div className="ui-scrollbar-hidden h-full overflow-y-auto px-3 pb-3 pt-3">
-              <div className="grid content-start gap-3">
-                <SettingsPanel
-                  disabledDependencyCue={disabledDependencyCue}
-                  onDisabledDependencyCueConsumed={clearDisabledDependencyCue}
-                  runtimeError={runtimeError}
-                  setSettings={setSettings}
-                  settings={settings}
-                />
+              <div className="mx-auto grid w-full max-w-[61rem] content-start gap-3">
+                <div className="grid items-start gap-3 [grid-template-columns:38.5rem_minmax(0,1fr)]">
+                  <SettingsPanel
+                    clickPositionControls={{
+                      onAddCenteredDot: () => void addCenteredClickPosition(),
+                      onClearDots: clearAllClickPositions,
+                      onRemoveDot: removeMostRecentClickPosition,
+                    }}
+                    disabledDependencyCue={disabledDependencyCue}
+                    onDisabledDependencyCueConsumed={clearDisabledDependencyCue}
+                    runtimeError={runtimeError}
+                    setSettings={setSettings}
+                    settings={settings}
+                  />
+                  <LimitsPanel
+                    onUnavailablePress={highlightDisabledDependency}
+                    setSettings={setSettings}
+                    settings={settings}
+                  />
+                </div>
                 {advancedPanels}
               </div>
             </div>
@@ -727,5 +812,5 @@ export default function App() {
         </div>
       </div>
     </div>
-  )
+  );
 }

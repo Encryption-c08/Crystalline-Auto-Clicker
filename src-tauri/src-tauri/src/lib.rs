@@ -2,6 +2,8 @@ use std::{fs, io::ErrorKind, path::PathBuf, sync::Mutex, thread, time::Duration}
 
 use serde::{Deserialize, Serialize};
 use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Size,
     WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
@@ -30,12 +32,17 @@ struct AppState {
     auto_clicker: AutoClickerController,
     click_position_overlay: Mutex<ClickPositionOverlayState>,
     click_position_overlay_loaded: Mutex<bool>,
+    close_to_tray_enabled: Mutex<bool>,
+    main_window_hidden_to_tray: Mutex<bool>,
 }
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const SETTINGS_DIR_NAME: &str = "Crystalline Auto Clicker";
 const CLICK_POSITION_OVERLAY_EVENT: &str = "click-position-overlay:update";
 const CLICK_POSITION_OVERLAY_WINDOW_LABEL: &str = "click-position-overlay";
+const MAIN_TRAY_ICON_ID: &str = "main-tray";
+const MAIN_TRAY_OPEN_ID: &str = "main-tray-open";
+const MAIN_TRAY_QUIT_ID: &str = "main-tray-quit";
 
 #[cfg(target_os = "windows")]
 static MAIN_WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -88,6 +95,7 @@ struct PersistedClickPosition {
 #[serde(rename_all = "camelCase")]
 struct PersistedAutoClickerSettings {
     theme: Option<String>,
+    close_to_tray: Option<bool>,
     click_mode: Option<String>,
     click_rate: Option<String>,
     click_rate_mode: Option<String>,
@@ -115,6 +123,7 @@ struct PersistedAutoClickerSettings {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WindowFrameRequest {
+    animate: Option<bool>,
     width: f64,
     height: f64,
     min_width: Option<f64>,
@@ -176,6 +185,199 @@ fn legacy_settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> 
         .app_config_dir()
         .map(|path| path.join(SETTINGS_FILE_NAME))
         .map_err(|error| format!("Unable to resolve settings folder: {error}"))
+}
+
+fn destroy_click_position_overlay_window(app: &tauri::AppHandle) {
+    if let Some(overlay_window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
+        let _ = overlay_window.destroy();
+    }
+}
+
+fn main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window("main")
+        .ok_or_else(|| "Main window is not available.".to_string())
+}
+
+fn update_close_to_tray_enabled(state: &AppState, enabled: bool) -> Result<(), String> {
+    let mut close_to_tray_enabled = state
+        .close_to_tray_enabled
+        .lock()
+        .map_err(|_| "Failed to lock close-to-tray state".to_string())?;
+    *close_to_tray_enabled = enabled;
+    Ok(())
+}
+
+fn is_close_to_tray_enabled(state: &AppState) -> bool {
+    state
+        .close_to_tray_enabled
+        .lock()
+        .map(|enabled| *enabled)
+        .unwrap_or(false)
+}
+
+fn set_main_window_hidden_to_tray(state: &AppState, hidden: bool) -> Result<(), String> {
+    let mut main_window_hidden_to_tray = state
+        .main_window_hidden_to_tray
+        .lock()
+        .map_err(|_| "Failed to lock tray visibility state".to_string())?;
+    *main_window_hidden_to_tray = hidden;
+    Ok(())
+}
+
+fn is_main_window_hidden_to_tray(state: &AppState) -> bool {
+    state
+        .main_window_hidden_to_tray
+        .lock()
+        .map(|hidden| *hidden)
+        .unwrap_or(false)
+}
+
+fn sync_main_tray_icon_visibility(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
+    let hidden_to_tray = is_main_window_hidden_to_tray(state);
+    let Some(tray_icon) = app.tray_by_id(MAIN_TRAY_ICON_ID) else {
+        return if hidden_to_tray {
+            Err("System tray is not available.".to_string())
+        } else {
+            Ok(())
+        };
+    };
+
+    tray_icon
+        .set_visible(hidden_to_tray)
+        .map_err(|error| format!("Unable to update tray icon visibility: {error}"))
+}
+
+fn hide_main_window_to_tray_inner(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
+    if is_main_window_hidden_to_tray(state) {
+        return Ok(());
+    }
+
+    set_main_window_hidden_to_tray(state, true)?;
+
+    let result = (|| {
+        sync_main_tray_icon_visibility(app, state)?;
+
+        let window = main_window(app)?;
+        window
+            .hide()
+            .map_err(|error| format!("Unable to hide main window: {error}"))?;
+
+        if matches!(window.is_minimized(), Ok(true)) {
+            let _ = window.unminimize();
+        }
+
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = set_main_window_hidden_to_tray(state, false);
+        let _ = sync_main_tray_icon_visibility(app, state);
+    }
+
+    result
+}
+
+fn restore_main_window_from_tray_inner(
+    app: &tauri::AppHandle,
+    state: &AppState,
+) -> Result<(), String> {
+    let window = main_window(app)?;
+
+    if matches!(window.is_minimized(), Ok(true)) {
+        let _ = window.unminimize();
+    }
+
+    window
+        .show()
+        .map_err(|error| format!("Unable to show main window: {error}"))?;
+
+    set_main_window_hidden_to_tray(state, false)?;
+    sync_main_tray_icon_visibility(app, state)?;
+
+    window
+        .set_focus()
+        .map_err(|error| format!("Unable to focus main window: {error}"))?;
+
+    Ok(())
+}
+
+fn setup_main_tray_icon(app: &tauri::AppHandle) -> Result<(), String> {
+    if app.tray_by_id(MAIN_TRAY_ICON_ID).is_some() {
+        return Ok(());
+    }
+
+    let tray_menu = MenuBuilder::new(app)
+        .text(MAIN_TRAY_OPEN_ID, "Open Crystalline Auto Clicker")
+        .separator()
+        .text(MAIN_TRAY_QUIT_ID, "Quit")
+        .build()
+        .map_err(|error| format!("Unable to build tray menu: {error}"))?;
+
+    let mut tray_builder = TrayIconBuilder::with_id(MAIN_TRAY_ICON_ID)
+        .menu(&tray_menu)
+        .show_menu_on_left_click(false)
+        .tooltip("Crystalline Auto Clicker")
+        .on_menu_event(|app, event| match event.id() {
+            id if id == MAIN_TRAY_OPEN_ID => {
+                if let Err(error) = restore_main_window_from_tray_inner(app, app.state::<AppState>().inner()) {
+                    log::error!("unable to restore main window from tray: {error}");
+                }
+            }
+            id if id == MAIN_TRAY_QUIT_ID => {
+                destroy_click_position_overlay_window(app);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                let app = tray.app_handle();
+                if let Err(error) =
+                    restore_main_window_from_tray_inner(app, app.state::<AppState>().inner())
+                {
+                    log::error!("unable to restore main window from tray: {error}");
+                }
+            }
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray_builder = tray_builder.icon(icon);
+    }
+
+    let tray_icon = tray_builder
+        .build(app)
+        .map_err(|error| format!("Unable to create tray icon: {error}"))?;
+
+    tray_icon
+        .set_visible(false)
+        .map_err(|error| format!("Unable to hide tray icon: {error}"))?;
+
+    Ok(())
+}
+
+fn initialize_close_to_tray_state(app: &tauri::AppHandle, state: &AppState) {
+    let close_to_tray_enabled = load_auto_clicker_settings(app.clone())
+        .ok()
+        .flatten()
+        .and_then(|settings| settings.close_to_tray)
+        .unwrap_or(false);
+
+    if let Err(error) = update_close_to_tray_enabled(state, close_to_tray_enabled) {
+        log::warn!("unable to initialize close-to-tray state: {error}");
+    }
+
+    if let Err(error) = sync_main_tray_icon_visibility(app, state) {
+        log::warn!("unable to initialize tray visibility: {error}");
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -333,6 +535,7 @@ fn load_auto_clicker_settings(
 fn save_auto_clicker_settings(
     app: tauri::AppHandle,
     settings: PersistedAutoClickerSettings,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let path = settings_file_path(&app)?;
 
@@ -344,7 +547,12 @@ fn save_auto_clicker_settings(
     let contents = serde_json::to_string_pretty(&settings)
         .map_err(|error| format!("Unable to serialize settings: {error}"))?;
 
-    fs::write(&path, contents).map_err(|error| format!("Unable to write settings: {error}"))
+    fs::write(&path, contents).map_err(|error| format!("Unable to write settings: {error}"))?;
+
+    update_close_to_tray_enabled(state.inner(), settings.close_to_tray.unwrap_or(false))?;
+    sync_main_tray_icon_visibility(&app, state.inner())?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -538,6 +746,7 @@ fn sync_main_window_frame(
     frame: WindowFrameRequest,
 ) -> Result<(), String> {
     let WindowFrameRequest {
+        animate,
         width,
         height,
         min_width,
@@ -571,8 +780,10 @@ fn sync_main_window_frame(
         .inner_size()
         .map_err(|error| format!("Unable to read window size: {error}"))?
         .to_logical::<f64>(scale_factor);
-    let needs_animation = (start_size.width - target_size.width).abs() >= 1.0
-        || (start_size.height - target_size.height).abs() >= 1.0;
+    let should_animate = animate.unwrap_or(true);
+    let needs_animation = should_animate
+        && ((start_size.width - target_size.width).abs() >= 1.0
+            || (start_size.height - target_size.height).abs() >= 1.0);
     const RESIZE_STEPS: u32 = 10;
     const RESIZE_FRAME_MS: u64 = 10;
 
@@ -618,6 +829,14 @@ fn sync_main_window_frame(
         .map_err(|error| format!("Unable to finalize main window size: {error}"))?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn hide_main_window_to_tray(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    hide_main_window_to_tray_inner(&app, state.inner())
 }
 
 #[cfg(target_os = "windows")]
@@ -710,8 +929,16 @@ pub fn run() {
             auto_clicker: AutoClickerController::new(),
             click_position_overlay: Mutex::new(ClickPositionOverlayState::default()),
             click_position_overlay_loaded: Mutex::new(false),
+            close_to_tray_enabled: Mutex::new(false),
+            main_window_hidden_to_tray: Mutex::new(false),
         })
         .setup(|app| {
+            if let Err(error) = setup_main_tray_icon(&app.handle()) {
+                log::warn!("unable to initialize tray icon: {error}");
+            }
+
+            initialize_close_to_tray_state(&app.handle(), app.state::<AppState>().inner());
+
             #[cfg(target_os = "windows")]
             {
                 if let Some(main_window) = app.get_webview_window("main") {
@@ -759,7 +986,8 @@ pub fn run() {
             set_click_position_overlay_interactive,
             read_pressed_keyboard_hotkey,
             read_global_hotkey_state,
-            sync_main_window_frame
+            sync_main_window_frame,
+            hide_main_window_to_tray
         ])
         .on_window_event(|window, event| {
             if window.label() != "main" {
@@ -767,23 +995,35 @@ pub fn run() {
             }
 
             match event {
-                WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
+                WindowEvent::Resized(_) => {
+                    let app = window.app_handle();
+                    let state = app.state::<AppState>();
 
-                    if let Some(overlay_window) =
-                        window.app_handle().get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
+                    if !is_close_to_tray_enabled(state.inner())
+                        || is_main_window_hidden_to_tray(state.inner())
                     {
-                        let _ = overlay_window.destroy();
+                        return;
                     }
 
+                    match window.is_minimized() {
+                        Ok(true) => {
+                            if let Err(error) = hide_main_window_to_tray_inner(&app, state.inner()) {
+                                log::error!("unable to send main window to tray: {error}");
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            log::warn!("unable to read minimized state: {error}");
+                        }
+                    }
+                }
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    destroy_click_position_overlay_window(&window.app_handle());
                     window.app_handle().exit(0);
                 }
                 WindowEvent::Destroyed => {
-                    if let Some(overlay_window) =
-                        window.app_handle().get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
-                    {
-                        let _ = overlay_window.destroy();
-                    }
+                    destroy_click_position_overlay_window(&window.app_handle());
                 }
                 _ => {}
             }

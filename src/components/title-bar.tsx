@@ -1,103 +1,122 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState } from "react";
 
-import { getCurrentWindow } from "@tauri-apps/api/window"
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { isTauri } from "@/lib/tauri"
+import { isTauri, trackedInvoke } from "@/lib/tauri";
 
-type WindowAction = "close" | "minimize" | "toggle-maximize"
+type WindowAction = "close" | "minimize" | "toggle-maximize";
 
-async function handleWindowAction(action: WindowAction) {
+async function handleWindowAction(
+  action: WindowAction,
+  closeToTrayEnabled = false,
+) {
   if (!isTauri()) {
-    return
+    return;
   }
 
-  const appWindow = getCurrentWindow()
+  const appWindow = getCurrentWindow();
 
   if (action === "close") {
-    await appWindow.close()
-    return
+    await appWindow.close();
+    return;
   }
 
   if (action === "minimize") {
-    await appWindow.minimize()
-    return
+    if (closeToTrayEnabled) {
+      try {
+        await trackedInvoke<void>("hide_main_window_to_tray");
+        return;
+      } catch (error) {
+        console.error("Unable to send window to tray", error);
+      }
+    }
+
+    await appWindow.minimize();
+    return;
   }
 
-  await appWindow.toggleMaximize()
+  await appWindow.toggleMaximize();
 }
 
 function MacControlButton({
   action,
   label,
+  closeToTrayEnabled = false,
   colorClassName,
 }: {
-  action: WindowAction
-  label: string
-  colorClassName: string
+  action: WindowAction;
+  label: string;
+  closeToTrayEnabled?: boolean;
+  colorClassName: string;
 }) {
   return (
     <button
       aria-label={label}
       className={`h-3.5 w-3.5 rounded-full transition hover:scale-105 hover:brightness-110 ${colorClassName}`}
       data-window-control
-      onClick={() => void handleWindowAction(action)}
+      onClick={() => void handleWindowAction(action, closeToTrayEnabled)}
       type="button"
     />
-  )
+  );
 }
 
-export function TitleBar() {
-  const titleText = "Crystalline Auto Clicker"
-  const [visibleTitle, setVisibleTitle] = useState("")
-  const [isDeletingTitle, setIsDeletingTitle] = useState(false)
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false)
+export function TitleBar({
+  closeToTrayEnabled = false,
+}: {
+  closeToTrayEnabled?: boolean;
+}) {
+  const titleText = "Crystalline Auto Clicker";
+  const [visibleTitle, setVisibleTitle] = useState("");
+  const [isDeletingTitle, setIsDeletingTitle] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     function updateMotionPreference() {
-      setPrefersReducedMotion(mediaQuery.matches)
+      setPrefersReducedMotion(mediaQuery.matches);
     }
 
-    updateMotionPreference()
+    updateMotionPreference();
 
-    mediaQuery.addEventListener("change", updateMotionPreference)
+    mediaQuery.addEventListener("change", updateMotionPreference);
 
-    return () => mediaQuery.removeEventListener("change", updateMotionPreference)
-  }, [])
+    return () =>
+      mediaQuery.removeEventListener("change", updateMotionPreference);
+  }, []);
 
   useEffect(() => {
     if (prefersReducedMotion) {
-      setVisibleTitle(titleText)
-      setIsDeletingTitle(false)
-      return undefined
+      setVisibleTitle(titleText);
+      setIsDeletingTitle(false);
+      return undefined;
     }
 
-    let delay = isDeletingTitle ? 45 : 75
+    let delay = isDeletingTitle ? 45 : 75;
 
     if (!isDeletingTitle && visibleTitle.length >= titleText.length) {
-      delay = 1400
+      delay = 1400;
     } else if (isDeletingTitle && visibleTitle.length === 0) {
-      delay = 350
+      delay = 350;
     }
 
     const timeoutId = window.setTimeout(() => {
       if (!isDeletingTitle && visibleTitle.length >= titleText.length) {
-        setIsDeletingTitle(true)
-        return
+        setIsDeletingTitle(true);
+        return;
       }
 
       if (isDeletingTitle && visibleTitle.length === 0) {
-        setIsDeletingTitle(false)
-        return
+        setIsDeletingTitle(false);
+        return;
       }
 
-      const nextLength = visibleTitle.length + (isDeletingTitle ? -1 : 1)
-      setVisibleTitle(titleText.slice(0, nextLength))
-    }, delay)
+      const nextLength = visibleTitle.length + (isDeletingTitle ? -1 : 1);
+      setVisibleTitle(titleText.slice(0, nextLength));
+    }, delay);
 
-    return () => window.clearTimeout(timeoutId)
-  }, [isDeletingTitle, prefersReducedMotion, titleText, visibleTitle])
+    return () => window.clearTimeout(timeoutId);
+  }, [isDeletingTitle, prefersReducedMotion, titleText, visibleTitle]);
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur">
@@ -124,6 +143,7 @@ export function TitleBar() {
         <div className="flex items-center gap-1.5" data-window-control>
           <MacControlButton
             action="minimize"
+            closeToTrayEnabled={closeToTrayEnabled}
             colorClassName="bg-[#febc2e]"
             label="Minimize window"
           />
@@ -140,5 +160,5 @@ export function TitleBar() {
         </div>
       </div>
     </header>
-  )
+  );
 }

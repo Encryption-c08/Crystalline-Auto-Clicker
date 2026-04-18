@@ -1,8 +1,12 @@
-import type { Dispatch, SetStateAction } from "react"
-import { useEffect, useId, useRef, useState } from "react"
+import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
-import { CheckIcon, ChevronDownIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
+import {
+  InlineClickPositionControls,
+  type ClickPositionControlCallbacks,
+} from "@/components/click-position-panel";
 import {
   clickModes,
   clickRateModeLabels,
@@ -18,46 +22,51 @@ import {
   type ClickRateMode,
   type MouseActionOption,
   type MouseButtonOption,
-} from "@/config/settings"
+} from "@/config/settings";
 import type {
   DisabledDependencyCue,
   DisabledDependencyTarget,
-} from "@/components/disabled-feature-dependency"
-import type { SettingsPanelLayout } from "@/components/settings-panel"
-import { finalizeClickRate, normalizeClickRateInput } from "@/config/runtime"
+} from "@/components/disabled-feature-dependency";
+import type { SettingsPanelLayout } from "@/components/settings-panel";
+import { finalizeClickRate, normalizeClickRateInput } from "@/config/runtime";
 import {
   buildHotkeyFromCaptureCodes,
   hotkeyCaptureCodeFromKeyboardEvent,
   hotkeyCaptureCodeFromMouseButton,
   isModifierHotkeyCode,
   UNBOUND_HOTKEY,
-} from "@/input/hotkeys"
-import { readPressedKeyboardHotkey } from "@/lib/hotkey-capture"
-import { isTauri } from "@/lib/tauri"
-import { Button } from "@tauri-ui/components/ui/button"
-import { Input } from "@tauri-ui/components/ui/input"
-import { Label } from "@tauri-ui/components/ui/label"
-import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
-import { cn } from "@tauri-ui/lib/utils"
+} from "@/input/hotkeys";
+import { readPressedKeyboardHotkey } from "@/lib/hotkey-capture";
+import { isTauri } from "@/lib/tauri";
+import { Button } from "@tauri-ui/components/ui/button";
+import { Input } from "@tauri-ui/components/ui/input";
+import { Label } from "@tauri-ui/components/ui/label";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@tauri-ui/components/ui/toggle-group";
+import { cn } from "@tauri-ui/lib/utils";
 
 function TinyLabel({ children }: { children: string }) {
   return (
     <Label className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
       {children}
     </Label>
-  )
+  );
 }
 
 type SettingsPanelContentProps = {
-  disabledDependencyCue: DisabledDependencyCue | null
-  layout?: SettingsPanelLayout
-  onDisabledDependencyCueConsumed?: () => void
-  settings: AutoClickerSettings
-  setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
-  runtimeError: string | null
-}
+  clickPositionControls?: ClickPositionControlCallbacks;
+  disabledDependencyCue: DisabledDependencyCue | null;
+  layout?: SettingsPanelLayout;
+  onDisabledDependencyCueConsumed?: () => void;
+  settings: AutoClickerSettings;
+  setSettings: Dispatch<SetStateAction<AutoClickerSettings>>;
+  runtimeError: string | null;
+};
 
 export function SettingsPanelContent({
+  clickPositionControls,
   disabledDependencyCue,
   layout = "default",
   onDisabledDependencyCueConsumed,
@@ -65,23 +74,26 @@ export function SettingsPanelContent({
   setSettings,
   runtimeError,
 }: SettingsPanelContentProps) {
-  const hotkeyId = useId()
-  const rateId = useId()
-  const rateUnitId = useId()
-  const ignoreNextHotkeyTriggerClickRef = useRef(false)
-  const hotkeyTriggerIgnoreTimeoutRef = useRef<number | null>(null)
-  const hotkeyCaptureUsedMouseRef = useRef(false)
-  const hotkeyCaptureUsedKeyboardRef = useRef(false)
-  const rateUnitDropdownRef = useRef<HTMLDivElement | null>(null)
+  const hotkeyId = useId();
+  const clickPositionSectionId = useId();
+  const rateId = useId();
+  const rateUnitId = useId();
+  const ignoreNextHotkeyTriggerClickRef = useRef(false);
+  const hotkeyTriggerIgnoreTimeoutRef = useRef<number | null>(null);
+  const hotkeyCaptureUsedMouseRef = useRef(false);
+  const hotkeyCaptureUsedKeyboardRef = useRef(false);
+  const rateUnitDropdownRef = useRef<HTMLDivElement | null>(null);
 
-  const [isCapturingHotkey, setIsCapturingHotkey] = useState(false)
-  const [isRateUnitDropdownOpen, setIsRateUnitDropdownOpen] = useState(false)
+  const [isCapturingHotkey, setIsCapturingHotkey] = useState(false);
+  const [isClickPositionSectionExpanded, setIsClickPositionSectionExpanded] =
+    useState(false);
+  const [isRateUnitDropdownOpen, setIsRateUnitDropdownOpen] = useState(false);
   const [queuedDependencyCue, setQueuedDependencyCue] =
-    useState<DisabledDependencyCue | null>(null)
+    useState<DisabledDependencyCue | null>(null);
   const [activeDependencyHighlight, setActiveDependencyHighlight] = useState<{
-    flashOn: boolean
-    target: DisabledDependencyTarget
-  } | null>(null)
+    flashOn: boolean;
+    target: DisabledDependencyTarget;
+  } | null>(null);
 
   const {
     clickMode,
@@ -91,78 +103,82 @@ export function SettingsPanelContent({
     hotkey,
     mouseAction,
     mouseButton,
-  } = settings
-  const isCompact = layout === "compact"
-  const rateUnits = getClickRateUnitsForMode(clickRateMode)
-  const clickRatePhrase =
-    clickRateMode === "every" ? "Every" : "Clicks per"
-  const isHotkeyUnbound = hotkey.code === ""
+  } = settings;
+  const isCompact = layout === "compact";
+  const rateUnits = getClickRateUnitsForMode(clickRateMode);
+  const clickRatePhrase = clickRateMode === "every" ? "Every" : "Clicks per";
+  const clickPositionDotCount = settings.clickPositions.length;
+  const clickPositionDotLabel = `${clickPositionDotCount} dot${
+    clickPositionDotCount === 1 ? "" : "s"
+  }`;
+  const isClickPositionActive =
+    settings.mouseAction === "click" && settings.clickPositionEnabled;
+  const isHotkeyUnbound = hotkey.code === "";
   const hotkeyTriggerClassName = cn(
     "justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0",
-    isHotkeyUnbound &&
-      !isCapturingHotkey &&
-      "text-muted-foreground/85",
+    isHotkeyUnbound && !isCapturingHotkey && "text-muted-foreground/85",
     isCapturingHotkey &&
-      "border-white/60 bg-white/10 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.18),0_0_22px_rgba(255,255,255,0.11)]"
-  )
+      "border-white/60 bg-white/10 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.18),0_0_22px_rgba(255,255,255,0.11)]",
+  );
   const isActionHoldHighlighted =
     activeDependencyHighlight?.target === "mouse-action-hold" &&
-    activeDependencyHighlight.flashOn
+    activeDependencyHighlight.flashOn;
   const isClickModeHoldHighlighted =
     activeDependencyHighlight?.target === "click-mode-hold" &&
-    activeDependencyHighlight.flashOn
+    activeDependencyHighlight.flashOn;
   const dependencyHighlightClassName =
-    "!bg-zinc-950 !text-white shadow-[0_0_0_1px_rgba(24,24,27,0.95),0_0_18px_rgba(24,24,27,0.2)] dark:!bg-white dark:!text-zinc-950 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]"
+    "!bg-zinc-950 !text-white shadow-[0_0_0_1px_rgba(24,24,27,0.95),0_0_18px_rgba(24,24,27,0.2)] dark:!bg-white dark:!text-zinc-950 dark:shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_18px_rgba(255,255,255,0.28)]";
 
   function clearHotkeyTriggerClickIgnore() {
-    ignoreNextHotkeyTriggerClickRef.current = false
+    ignoreNextHotkeyTriggerClickRef.current = false;
 
     if (hotkeyTriggerIgnoreTimeoutRef.current !== null) {
-      window.clearTimeout(hotkeyTriggerIgnoreTimeoutRef.current)
-      hotkeyTriggerIgnoreTimeoutRef.current = null
+      window.clearTimeout(hotkeyTriggerIgnoreTimeoutRef.current);
+      hotkeyTriggerIgnoreTimeoutRef.current = null;
     }
   }
 
   function armHotkeyTriggerClickIgnore() {
-    clearHotkeyTriggerClickIgnore()
-    ignoreNextHotkeyTriggerClickRef.current = true
+    clearHotkeyTriggerClickIgnore();
+    ignoreNextHotkeyTriggerClickRef.current = true;
     hotkeyTriggerIgnoreTimeoutRef.current = window.setTimeout(() => {
-      ignoreNextHotkeyTriggerClickRef.current = false
-      hotkeyTriggerIgnoreTimeoutRef.current = null
-    }, 250)
+      ignoreNextHotkeyTriggerClickRef.current = false;
+      hotkeyTriggerIgnoreTimeoutRef.current = null;
+    }, 250);
   }
 
   function cycleMouseButton() {
     setSettings((current) => {
-      const currentIndex = mouseButtons.indexOf(current.mouseButton)
-      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % mouseButtons.length : 0
+      const currentIndex = mouseButtons.indexOf(current.mouseButton);
+      const nextIndex =
+        currentIndex >= 0 ? (currentIndex + 1) % mouseButtons.length : 0;
 
       return {
         ...current,
         mouseButton: mouseButtons[nextIndex],
-      }
-    })
+      };
+    });
   }
 
   function cycleClickRateUnit() {
-    setIsRateUnitDropdownOpen(false)
+    setIsRateUnitDropdownOpen(false);
     setSettings((current) => {
-      const nextRateUnits = getClickRateUnitsForMode(current.clickRateMode)
-      const currentIndex = nextRateUnits.indexOf(current.clickRateUnit)
+      const nextRateUnits = getClickRateUnitsForMode(current.clickRateMode);
+      const currentIndex = nextRateUnits.indexOf(current.clickRateUnit);
       const nextIndex =
-        currentIndex >= 0 ? (currentIndex + 1) % nextRateUnits.length : 0
+        currentIndex >= 0 ? (currentIndex + 1) % nextRateUnits.length : 0;
 
       return {
         ...current,
         clickRateUnit: nextRateUnits[nextIndex] ?? "s",
-      }
-    })
+      };
+    });
   }
 
   function setClickRateMode(nextMode: ClickRateMode) {
     setSettings((current) => {
-      const nextUnits = getClickRateUnitsForMode(nextMode)
-      const nextDefaultUnit = nextUnits[0] ?? "s"
+      const nextUnits = getClickRateUnitsForMode(nextMode);
+      const nextDefaultUnit = nextUnits[0] ?? "s";
 
       return {
         ...current,
@@ -172,8 +188,8 @@ export function SettingsPanelContent({
           : nextUnits.includes(current.clickRateUnit)
             ? current.clickRateUnit
             : nextDefaultUnit,
-      }
-    })
+      };
+    });
   }
 
   function renderHotkeyTriggerContent() {
@@ -186,135 +202,137 @@ export function SettingsPanelContent({
           />
           <span>Listening...</span>
         </span>
-      )
+      );
     }
 
     if (isHotkeyUnbound) {
-      return "Press any key"
+      return "Press any key";
     }
 
-    return hotkey.label
+    return hotkey.label;
   }
 
   useEffect(() => {
     return () => {
-      clearHotkeyTriggerClickIgnore()
-    }
-  }, [])
+      clearHotkeyTriggerClickIgnore();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isCapturingHotkey) {
-      return undefined
+      return undefined;
     }
 
-    hotkeyCaptureUsedMouseRef.current = false
-    hotkeyCaptureUsedKeyboardRef.current = false
+    hotkeyCaptureUsedMouseRef.current = false;
+    hotkeyCaptureUsedKeyboardRef.current = false;
 
-    let pendingHotkey: AutoClickerSettings["hotkey"] | null = null
-    let capturedHotkeyCodes: string[] = []
-    let pressedKeyboardCodes: string[] = []
-    let pressedMouseButtons: number[] = []
+    let pendingHotkey: AutoClickerSettings["hotkey"] | null = null;
+    let capturedHotkeyCodes: string[] = [];
+    let pressedKeyboardCodes: string[] = [];
+    let pressedMouseButtons: number[] = [];
 
     function rememberPressedKeyboardCode(code: string) {
       if (pressedKeyboardCodes.includes(code)) {
-        return
+        return;
       }
 
-      pressedKeyboardCodes = [...pressedKeyboardCodes, code]
+      pressedKeyboardCodes = [...pressedKeyboardCodes, code];
     }
 
     function forgetPressedKeyboardCode(code: string) {
       pressedKeyboardCodes = pressedKeyboardCodes.filter(
-        (pressedCode) => pressedCode !== code
-      )
+        (pressedCode) => pressedCode !== code,
+      );
     }
 
     function rememberCapturedHotkeyCode(code: string) {
       if (capturedHotkeyCodes.includes(code)) {
-        return
+        return;
       }
 
-      capturedHotkeyCodes = [...capturedHotkeyCodes, code]
+      capturedHotkeyCodes = [...capturedHotkeyCodes, code];
     }
 
     function rememberPressedMouseButton(button: number) {
       if (pressedMouseButtons.includes(button)) {
-        return
+        return;
       }
 
-      pressedMouseButtons = [...pressedMouseButtons, button]
+      pressedMouseButtons = [...pressedMouseButtons, button];
     }
 
     function forgetPressedMouseButton(button: number) {
       pressedMouseButtons = pressedMouseButtons.filter(
-        (pressedButton) => pressedButton !== button
-      )
+        (pressedButton) => pressedButton !== button,
+      );
     }
 
-    function updatePendingHotkey(nextHotkey: AutoClickerSettings["hotkey"] | null) {
+    function updatePendingHotkey(
+      nextHotkey: AutoClickerSettings["hotkey"] | null,
+    ) {
       if (nextHotkey) {
-        pendingHotkey = nextHotkey
+        pendingHotkey = nextHotkey;
       }
     }
 
     function finalizePendingHotkeyIfIdle() {
       if (!pendingHotkey) {
-        return
+        return;
       }
 
       const hasActiveNonModifierKeyboardKey = pressedKeyboardCodes.some(
-        (code) => !isModifierHotkeyCode(code)
-      )
+        (code) => !isModifierHotkeyCode(code),
+      );
       if (hasActiveNonModifierKeyboardKey || pressedMouseButtons.length > 0) {
-        return
+        return;
       }
 
-      setSettings((current) => ({ ...current, hotkey: pendingHotkey! }))
-      setIsCapturingHotkey(false)
+      setSettings((current) => ({ ...current, hotkey: pendingHotkey! }));
+      setIsCapturingHotkey(false);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        event.preventDefault()
-        event.stopPropagation()
+        event.preventDefault();
+        event.stopPropagation();
         setSettings((current) => ({
           ...current,
           hotkey: { ...UNBOUND_HOTKEY },
-        }))
-        setIsCapturingHotkey(false)
-        return
+        }));
+        setIsCapturingHotkey(false);
+        return;
       }
 
-      const captureCode = hotkeyCaptureCodeFromKeyboardEvent(event)
+      const captureCode = hotkeyCaptureCodeFromKeyboardEvent(event);
       if (!captureCode) {
-        event.preventDefault()
-        event.stopPropagation()
-        return
+        event.preventDefault();
+        event.stopPropagation();
+        return;
       }
 
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
 
       if (!isModifierHotkeyCode(captureCode)) {
-        hotkeyCaptureUsedKeyboardRef.current = true
+        hotkeyCaptureUsedKeyboardRef.current = true;
       }
 
-      rememberPressedKeyboardCode(captureCode)
-      rememberCapturedHotkeyCode(captureCode)
-      updatePendingHotkey(buildHotkeyFromCaptureCodes(capturedHotkeyCodes))
+      rememberPressedKeyboardCode(captureCode);
+      rememberCapturedHotkeyCode(captureCode);
+      updatePendingHotkey(buildHotkeyFromCaptureCodes(capturedHotkeyCodes));
     }
 
     function handleKeyUp(event: KeyboardEvent) {
-      const captureCode = hotkeyCaptureCodeFromKeyboardEvent(event)
+      const captureCode = hotkeyCaptureCodeFromKeyboardEvent(event);
       if (!captureCode) {
-        return
+        return;
       }
 
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
 
-      forgetPressedKeyboardCode(captureCode)
-      finalizePendingHotkeyIfIdle()
+      forgetPressedKeyboardCode(captureCode);
+      finalizePendingHotkeyIfIdle();
     }
 
     function handleMouseDown(event: MouseEvent) {
@@ -322,21 +340,21 @@ export function SettingsPanelContent({
         event.target instanceof Element &&
         event.target.closest("[data-hotkey-trigger]")
       ) {
-        armHotkeyTriggerClickIgnore()
+        armHotkeyTriggerClickIgnore();
       }
 
-      hotkeyCaptureUsedMouseRef.current = true
-      rememberPressedMouseButton(event.button)
+      hotkeyCaptureUsedMouseRef.current = true;
+      rememberPressedMouseButton(event.button);
 
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
 
-      const captureCode = hotkeyCaptureCodeFromMouseButton(event.button)
+      const captureCode = hotkeyCaptureCodeFromMouseButton(event.button);
       if (captureCode) {
-        rememberCapturedHotkeyCode(captureCode)
+        rememberCapturedHotkeyCode(captureCode);
       }
 
-      updatePendingHotkey(buildHotkeyFromCaptureCodes(capturedHotkeyCodes))
+      updatePendingHotkey(buildHotkeyFromCaptureCodes(capturedHotkeyCodes));
     }
 
     function handleMouseUp(event: MouseEvent) {
@@ -344,80 +362,80 @@ export function SettingsPanelContent({
         event.target instanceof Element &&
         event.target.closest("[data-hotkey-trigger]")
       ) {
-        armHotkeyTriggerClickIgnore()
+        armHotkeyTriggerClickIgnore();
       }
 
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
 
-      hotkeyCaptureUsedMouseRef.current = true
-      forgetPressedMouseButton(event.button)
-      finalizePendingHotkeyIfIdle()
+      hotkeyCaptureUsedMouseRef.current = true;
+      forgetPressedMouseButton(event.button);
+      finalizePendingHotkeyIfIdle();
     }
 
     function handleContextMenu(event: MouseEvent) {
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
     }
 
     function handleMouseClick(event: MouseEvent) {
-      event.preventDefault()
-      event.stopPropagation()
+      event.preventDefault();
+      event.stopPropagation();
     }
 
     function handleWheel(event: WheelEvent) {
-      hotkeyCaptureUsedMouseRef.current = true
+      hotkeyCaptureUsedMouseRef.current = true;
       const wheelCaptureCode =
-        event.deltaY < 0 ? "WheelUp" : event.deltaY > 0 ? "WheelDown" : null
+        event.deltaY < 0 ? "WheelUp" : event.deltaY > 0 ? "WheelDown" : null;
       if (wheelCaptureCode) {
-        rememberCapturedHotkeyCode(wheelCaptureCode)
+        rememberCapturedHotkeyCode(wheelCaptureCode);
       }
 
-      const nextHotkey = buildHotkeyFromCaptureCodes(capturedHotkeyCodes)
+      const nextHotkey = buildHotkeyFromCaptureCodes(capturedHotkeyCodes);
       if (!nextHotkey) {
-        return
+        return;
       }
 
-      event.preventDefault()
-      event.stopPropagation()
-      setSettings((current) => ({ ...current, hotkey: nextHotkey }))
-      setIsCapturingHotkey(false)
+      event.preventDefault();
+      event.stopPropagation();
+      setSettings((current) => ({ ...current, hotkey: nextHotkey }));
+      setIsCapturingHotkey(false);
     }
 
-    window.addEventListener("keydown", handleKeyDown, true)
-    window.addEventListener("keyup", handleKeyUp, true)
-    window.addEventListener("mousedown", handleMouseDown, true)
-    window.addEventListener("mouseup", handleMouseUp, true)
-    window.addEventListener("click", handleMouseClick, true)
-    window.addEventListener("auxclick", handleMouseClick, true)
-    window.addEventListener("contextmenu", handleContextMenu, true)
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("mousedown", handleMouseDown, true);
+    window.addEventListener("mouseup", handleMouseUp, true);
+    window.addEventListener("click", handleMouseClick, true);
+    window.addEventListener("auxclick", handleMouseClick, true);
+    window.addEventListener("contextmenu", handleContextMenu, true);
     window.addEventListener("wheel", handleWheel, {
       capture: true,
       passive: false,
-    })
+    });
 
     return () => {
-      hotkeyCaptureUsedMouseRef.current = false
-      hotkeyCaptureUsedKeyboardRef.current = false
-      window.removeEventListener("keydown", handleKeyDown, true)
-      window.removeEventListener("keyup", handleKeyUp, true)
-      window.removeEventListener("mousedown", handleMouseDown, true)
-      window.removeEventListener("mouseup", handleMouseUp, true)
-      window.removeEventListener("click", handleMouseClick, true)
-      window.removeEventListener("auxclick", handleMouseClick, true)
-      window.removeEventListener("contextmenu", handleContextMenu, true)
-      window.removeEventListener("wheel", handleWheel, true)
-    }
-  }, [isCapturingHotkey, setSettings])
+      hotkeyCaptureUsedMouseRef.current = false;
+      hotkeyCaptureUsedKeyboardRef.current = false;
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("mousedown", handleMouseDown, true);
+      window.removeEventListener("mouseup", handleMouseUp, true);
+      window.removeEventListener("click", handleMouseClick, true);
+      window.removeEventListener("auxclick", handleMouseClick, true);
+      window.removeEventListener("contextmenu", handleContextMenu, true);
+      window.removeEventListener("wheel", handleWheel, true);
+    };
+  }, [isCapturingHotkey, setSettings]);
 
   useEffect(() => {
     if (!isCapturingHotkey || !isTauri()) {
-      return undefined
+      return undefined;
     }
 
-    let cancelled = false
-    let pendingNativeHotkey: AutoClickerSettings["hotkey"] | null = null
-    let pollInFlight = false
+    let cancelled = false;
+    let pendingNativeHotkey: AutoClickerSettings["hotkey"] | null = null;
+    let pollInFlight = false;
 
     async function pollPressedKeyboardHotkey() {
       if (
@@ -426,104 +444,104 @@ export function SettingsPanelContent({
         hotkeyCaptureUsedMouseRef.current ||
         hotkeyCaptureUsedKeyboardRef.current
       ) {
-        pendingNativeHotkey = null
-        return
+        pendingNativeHotkey = null;
+        return;
       }
 
-      pollInFlight = true
+      pollInFlight = true;
 
       try {
-        const nextHotkey = await readPressedKeyboardHotkey()
+        const nextHotkey = await readPressedKeyboardHotkey();
         if (cancelled) {
-          return
+          return;
         }
 
         if (nextHotkey) {
-          pendingNativeHotkey = nextHotkey
-          return
+          pendingNativeHotkey = nextHotkey;
+          return;
         }
 
         if (!pendingNativeHotkey) {
-          return
+          return;
         }
 
         setSettings((current) => ({
           ...current,
           hotkey: pendingNativeHotkey!,
-        }))
-        setIsCapturingHotkey(false)
+        }));
+        setIsCapturingHotkey(false);
       } catch (error) {
-        console.error("Unable to read native hotkey state", error)
+        console.error("Unable to read native hotkey state", error);
       } finally {
-        pollInFlight = false
+        pollInFlight = false;
       }
     }
 
-    void pollPressedKeyboardHotkey()
+    void pollPressedKeyboardHotkey();
 
     const intervalId = window.setInterval(() => {
-      void pollPressedKeyboardHotkey()
-    }, 16)
+      void pollPressedKeyboardHotkey();
+    }, 16);
 
     return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-    }
-  }, [isCapturingHotkey, setSettings])
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isCapturingHotkey, setSettings]);
 
   useEffect(() => {
     if (!disabledDependencyCue) {
-      return undefined
+      return undefined;
     }
 
-    setQueuedDependencyCue(disabledDependencyCue)
-    onDisabledDependencyCueConsumed?.()
-  }, [disabledDependencyCue, onDisabledDependencyCueConsumed])
+    setQueuedDependencyCue(disabledDependencyCue);
+    onDisabledDependencyCueConsumed?.();
+  }, [disabledDependencyCue, onDisabledDependencyCueConsumed]);
 
   useEffect(() => {
     if (!queuedDependencyCue) {
-      return undefined
+      return undefined;
     }
 
-    let flashOn = true
-    let completedFlashes = 0
+    let flashOn = true;
+    let completedFlashes = 0;
 
     setActiveDependencyHighlight({
       flashOn: true,
       target: queuedDependencyCue.target,
-    })
+    });
 
     const intervalId = window.setInterval(() => {
-      completedFlashes += 1
+      completedFlashes += 1;
 
       if (completedFlashes >= 12) {
-        window.clearInterval(intervalId)
-        setActiveDependencyHighlight(null)
-        return
+        window.clearInterval(intervalId);
+        setActiveDependencyHighlight(null);
+        return;
       }
 
-      flashOn = !flashOn
+      flashOn = !flashOn;
       setActiveDependencyHighlight({
         flashOn,
         target: queuedDependencyCue.target,
-      })
-    }, 260)
+      });
+    }, 260);
 
     const timeoutId = window.setTimeout(() => {
-      window.clearInterval(intervalId)
-      setActiveDependencyHighlight(null)
-      setQueuedDependencyCue(null)
-    }, 3_200)
+      window.clearInterval(intervalId);
+      setActiveDependencyHighlight(null);
+      setQueuedDependencyCue(null);
+    }, 3_200);
 
     return () => {
-      window.clearInterval(intervalId)
-      window.clearTimeout(timeoutId)
-    }
-  }, [queuedDependencyCue])
+      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [queuedDependencyCue]);
 
   useEffect(() => {
     if (!isRateUnitDropdownOpen) {
-      return undefined
+      return undefined;
     }
 
     function handlePointerDown(event: MouseEvent) {
@@ -531,24 +549,24 @@ export function SettingsPanelContent({
         rateUnitDropdownRef.current &&
         !rateUnitDropdownRef.current.contains(event.target as Node)
       ) {
-        setIsRateUnitDropdownOpen(false)
+        setIsRateUnitDropdownOpen(false);
       }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setIsRateUnitDropdownOpen(false)
+        setIsRateUnitDropdownOpen(false);
       }
     }
 
-    window.addEventListener("mousedown", handlePointerDown)
-    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown)
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [isRateUnitDropdownOpen])
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isRateUnitDropdownOpen]);
 
   if (isCompact) {
     return (
@@ -582,7 +600,7 @@ export function SettingsPanelContent({
               className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
               onValueChange={(value) => {
                 if (value) {
-                  setClickRateMode(value as ClickRateMode)
+                  setClickRateMode(value as ClickRateMode);
                 }
               }}
               size="sm"
@@ -625,11 +643,11 @@ export function SettingsPanelContent({
               id={hotkeyId}
               onClick={() => {
                 if (ignoreNextHotkeyTriggerClickRef.current) {
-                  clearHotkeyTriggerClickIgnore()
-                  return
+                  clearHotkeyTriggerClickIgnore();
+                  return;
                 }
 
-                setIsCapturingHotkey(true)
+                setIsCapturingHotkey(true);
               }}
               size="sm"
               type="button"
@@ -650,7 +668,7 @@ export function SettingsPanelContent({
                   setSettings((current) => ({
                     ...current,
                     mouseAction: value as MouseActionOption,
-                  }))
+                  }));
                 }
               }}
               size="sm"
@@ -665,7 +683,7 @@ export function SettingsPanelContent({
                     "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                     value === "hold" &&
                       isActionHoldHighlighted &&
-                      dependencyHighlightClassName
+                      dependencyHighlightClassName,
                   )}
                   key={value}
                   value={value}
@@ -699,7 +717,7 @@ export function SettingsPanelContent({
                   setSettings((current) => ({
                     ...current,
                     clickMode: value as ClickMode,
-                  }))
+                  }));
                 }
               }}
               size="sm"
@@ -714,7 +732,7 @@ export function SettingsPanelContent({
                     "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                     value === "hold" &&
                       isClickModeHoldHighlighted &&
-                      dependencyHighlightClassName
+                      dependencyHighlightClassName,
                   )}
                   key={value}
                   value={value}
@@ -732,7 +750,7 @@ export function SettingsPanelContent({
           </div>
         ) : null}
       </div>
-    )
+    );
   }
 
   return (
@@ -779,7 +797,7 @@ export function SettingsPanelContent({
                 "flex h-8 w-full items-center justify-between border border-border bg-background/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-background/80 focus-visible:outline-none focus-visible:ring-0",
                 isRateUnitDropdownOpen
                   ? "rounded-t-lg rounded-b-none border-b-transparent bg-background/80"
-                  : "rounded-lg"
+                  : "rounded-lg",
               )}
               id={rateUnitId}
               onClick={() => setIsRateUnitDropdownOpen((current) => !current)}
@@ -789,7 +807,7 @@ export function SettingsPanelContent({
               <ChevronDownIcon
                 className={cn(
                   "size-3.5 text-muted-foreground transition-transform duration-200",
-                  isRateUnitDropdownOpen && "rotate-180"
+                  isRateUnitDropdownOpen && "rotate-180",
                 )}
               />
             </button>
@@ -801,7 +819,7 @@ export function SettingsPanelContent({
               >
                 <div className="p-1">
                   {rateUnits.map((value) => {
-                    const isSelected = value === clickRateUnit
+                    const isSelected = value === clickRateUnit;
 
                     return (
                       <button
@@ -809,15 +827,15 @@ export function SettingsPanelContent({
                           "flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm font-medium transition-colors",
                           isSelected
                             ? "bg-muted-foreground/14 text-foreground"
-                            : "text-foreground/88 hover:bg-muted-foreground/10"
+                            : "text-foreground/88 hover:bg-muted-foreground/10",
                         )}
                         key={value}
                         onClick={() => {
                           setSettings((current) => ({
                             ...current,
                             clickRateUnit: value,
-                          }))
-                          setIsRateUnitDropdownOpen(false)
+                          }));
+                          setIsRateUnitDropdownOpen(false);
                         }}
                         role="option"
                         type="button"
@@ -826,11 +844,11 @@ export function SettingsPanelContent({
                         <CheckIcon
                           className={cn(
                             "size-3.5 text-foreground/80 transition-opacity",
-                            isSelected ? "opacity-100" : "opacity-0"
+                            isSelected ? "opacity-100" : "opacity-0",
                           )}
                         />
                       </button>
-                    )
+                    );
                   })}
                 </div>
               </div>
@@ -840,7 +858,7 @@ export function SettingsPanelContent({
             className="shrink-0 overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
             onValueChange={(value) => {
               if (value) {
-                setClickRateMode(value as ClickRateMode)
+                setClickRateMode(value as ClickRateMode);
               }
             }}
             size="sm"
@@ -873,11 +891,11 @@ export function SettingsPanelContent({
             id={hotkeyId}
             onClick={() => {
               if (ignoreNextHotkeyTriggerClickRef.current) {
-                clearHotkeyTriggerClickIgnore()
-                return
+                clearHotkeyTriggerClickIgnore();
+                return;
               }
 
-              setIsCapturingHotkey(true)
+              setIsCapturingHotkey(true);
             }}
             size="sm"
             type="button"
@@ -896,7 +914,7 @@ export function SettingsPanelContent({
                 setSettings((current) => ({
                   ...current,
                   clickMode: value as ClickMode,
-                }))
+                }));
               }
             }}
             size="sm"
@@ -911,7 +929,7 @@ export function SettingsPanelContent({
                   "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                   value === "hold" &&
                     isClickModeHoldHighlighted &&
-                    dependencyHighlightClassName
+                    dependencyHighlightClassName,
                 )}
                 key={value}
                 value={value}
@@ -933,7 +951,7 @@ export function SettingsPanelContent({
                 setSettings((current) => ({
                   ...current,
                   mouseAction: value as MouseActionOption,
-                }))
+                }));
               }
             }}
             size="sm"
@@ -948,7 +966,7 @@ export function SettingsPanelContent({
                   "px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0",
                   value === "hold" &&
                     isActionHoldHighlighted &&
-                    dependencyHighlightClassName
+                    dependencyHighlightClassName,
                 )}
                 key={value}
                 value={value}
@@ -968,7 +986,7 @@ export function SettingsPanelContent({
                 setSettings((current) => ({
                   ...current,
                   mouseButton: value as MouseButtonOption,
-                }))
+                }));
               }
             }}
             size="sm"
@@ -995,6 +1013,63 @@ export function SettingsPanelContent({
           {runtimeError}
         </div>
       ) : null}
+
+      {clickPositionControls ? (
+        <div className="mt-1 border-t border-border/60 pt-3">
+          {isClickPositionSectionExpanded ? (
+            <div className="pb-2" id={clickPositionSectionId}>
+              <InlineClickPositionControls
+                onAddCenteredDot={clickPositionControls.onAddCenteredDot}
+                onClearDots={clickPositionControls.onClearDots}
+                onRemoveDot={clickPositionControls.onRemoveDot}
+                onUnavailablePress={(target) =>
+                  setQueuedDependencyCue({ target })
+                }
+                setSettings={setSettings}
+                settings={settings}
+              />
+            </div>
+          ) : null}
+
+          <div className="flex justify-start">
+            <button
+              aria-controls={clickPositionSectionId}
+              aria-expanded={isClickPositionSectionExpanded}
+              className={cn(
+                "inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-0",
+                isClickPositionActive || clickPositionDotCount > 0
+                  ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
+                  : "border-border/60 bg-background/40 text-muted-foreground hover:bg-background/65 hover:text-foreground",
+              )}
+              onClick={() =>
+                setIsClickPositionSectionExpanded((current) => !current)
+              }
+              type="button"
+            >
+              <span>Click Positions</span>
+              <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
+                {clickPositionDotLabel}
+              </span>
+              <span
+                className={cn(
+                  "rounded-md px-1 py-1 text-[10px] leading-none",
+                  isClickPositionActive
+                    ? "bg-muted-foreground/15 text-foreground"
+                    : "text-muted-foreground",
+                )}
+              >
+                {isClickPositionActive ? "On" : "Off"}
+              </span>
+              <ChevronDownIcon
+                className={cn(
+                  "size-3.5 transition-transform duration-200",
+                  isClickPositionSectionExpanded && "rotate-180",
+                )}
+              />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
-  )
+  );
 }
