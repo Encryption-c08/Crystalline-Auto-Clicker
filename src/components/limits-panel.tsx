@@ -35,11 +35,11 @@ function DescriptionTooltip({
   return (
     <div className="group/tooltip relative">
       {children}
-      <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-max max-w-[min(20rem,calc(100vw-1.5rem))] opacity-0 transition-[opacity,transform] duration-120 group-hover/tooltip:opacity-100">
+      <div className="pointer-events-none absolute top-full left-1/2 z-[60] mt-2 w-max max-w-[20rem] -translate-x-1/2 opacity-0 transition-[opacity,transform] duration-120 group-hover/tooltip:opacity-100">
         <div className="rounded-md border border-white/12 bg-zinc-950/98 px-3 py-1.5 text-xs text-zinc-50 shadow-[0_18px_40px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-sm">
           {description}
         </div>
-        <div className="absolute top-full left-8 h-2.5 w-2.5 -translate-y-[5px] rotate-45 border-r border-b border-white/12 bg-zinc-950/98" />
+        <div className="absolute bottom-full left-1/2 h-2.5 w-2.5 -translate-x-1/2 translate-y-[5px] rotate-45 border-l border-t border-white/12 bg-zinc-950/98" />
       </div>
     </div>
   );

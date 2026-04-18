@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { AlwaysOnTopButton } from "@/components/always-on-top-button";
 import { isTauri, trackedInvoke } from "@/lib/tauri";
 
 type WindowAction = "close" | "minimize" | "toggle-maximize";
@@ -141,6 +142,7 @@ export function TitleBar({
         </div>
 
         <div className="flex items-center gap-1.5" data-window-control>
+          <AlwaysOnTopButton />
           <MacControlButton
             action="minimize"
             closeToTrayEnabled={closeToTrayEnabled}
