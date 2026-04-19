@@ -11,6 +11,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 
+use crate::edge_stop::{cursor_hits_edge_stop, EdgeStopRuntime};
+
 use super::{
     AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, JitterMode,
     MouseButton,
@@ -133,6 +135,11 @@ pub(crate) struct ClickCadence {
     pub(crate) remainder_nanos: u64,
 }
 
+pub(crate) enum DispatchMouseClicksOutcome {
+    Completed(usize),
+    EdgeStopTriggered(ClickPositionPoint),
+}
+
 const MIN_CLICK_RATE: u64 = 1;
 const MAX_CLICK_RATE: u64 = 5_000;
 const XBUTTON1_DATA: u32 = 0x0001;
@@ -240,10 +247,11 @@ pub(crate) fn dispatch_mouse_clicks(
     click_duration_range: Option<ClickDurationRange>,
     cursor_jitter: Option<CursorJitterConfig>,
     base_position: Option<ClickPositionPoint>,
+    edge_stop: Option<&EdgeStopRuntime>,
     randomizer: &mut ClickRandomizer,
-) -> Result<usize, String> {
+) -> Result<DispatchMouseClicksOutcome, String> {
     if count == 0 {
-        return Ok(0);
+        return Ok(DispatchMouseClicksOutcome::Completed(0));
     }
 
     let cycle_size = clicks_per_cycle.max(1);
@@ -260,9 +268,16 @@ pub(crate) fn dispatch_mouse_clicks(
         let mut should_click_on_restore = false;
 
         if let Some(base_position) = click_base_position {
+            if edge_stop_matches_position(edge_stop, base_position) {
+                return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(base_position));
+            }
+
             let target_position = cursor_jitter
                 .map(|jitter| randomizer.next_jittered_position(base_position, jitter))
                 .unwrap_or(base_position);
+            if edge_stop_matches_position(edge_stop, target_position) {
+                return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(target_position));
+            }
             should_click_on_restore =
                 cursor_jitter.is_some() && !click_positions_match(target_position, base_position);
             move_cursor_to_position(target_position)?;
@@ -273,6 +288,9 @@ pub(crate) fn dispatch_mouse_clicks(
 
         if should_click_on_restore {
             if let Some(base_position) = click_base_position {
+                if edge_stop_matches_position(edge_stop, base_position) {
+                    return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(base_position));
+                }
                 move_cursor_to_position(base_position)?;
                 dispatch_single_mouse_click(mouse_button, click_duration_range, randomizer)?;
                 dispatched_click_count += 1;
@@ -289,7 +307,7 @@ pub(crate) fn dispatch_mouse_clicks(
         }
     }
 
-    Ok(dispatched_click_count)
+    Ok(DispatchMouseClicksOutcome::Completed(dispatched_click_count))
 }
 
 pub(crate) fn press_mouse_button(mouse_button: MouseButton) -> Result<(), String> {
@@ -324,6 +342,15 @@ pub(crate) fn current_cursor_position() -> Result<ClickPositionPoint, String> {
 
 fn click_positions_match(left: ClickPositionPoint, right: ClickPositionPoint) -> bool {
     left.x == right.x && left.y == right.y
+}
+
+fn edge_stop_matches_position(
+    edge_stop: Option<&EdgeStopRuntime>,
+    position: ClickPositionPoint,
+) -> bool {
+    edge_stop
+        .map(|runtime| cursor_hits_edge_stop(runtime, position.x, position.y))
+        .unwrap_or(false)
 }
 
 fn dispatch_single_mouse_click(

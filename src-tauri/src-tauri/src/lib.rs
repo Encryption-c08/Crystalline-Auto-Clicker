@@ -25,10 +25,13 @@ use windows_sys::Win32::{
 
 #[path = "../../../src/native/Clicker.rs"]
 mod auto_clicker;
+#[path = "../../../src/native/edge_stop.rs"]
+mod edge_stop;
 #[path = "../../../src/native/process_filters.rs"]
 mod process_filters;
 
 use auto_clicker::{AutoClickerCommandConfig, AutoClickerController, AutoClickerStatus};
+use edge_stop::{edge_stop_runtime, EdgeStopWidths, OverlayRect};
 use process_filters::{
     foreground_process_name as resolve_foreground_process_name,
     list_open_app_processes as resolve_open_app_processes, OpenAppProcess,
@@ -134,6 +137,11 @@ struct PersistedAutoClickerSettings {
     time_limit_enabled: Option<bool>,
     time_limit: Option<String>,
     time_limit_unit: Option<String>,
+    edge_stop_enabled: Option<bool>,
+    edge_stop_top_width: Option<String>,
+    edge_stop_right_width: Option<String>,
+    edge_stop_bottom_width: Option<String>,
+    edge_stop_left_width: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -165,9 +173,27 @@ struct ClickPositionPointDto {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayRequest {
+    edge_stop: EdgeStopOverlayRequest,
     editable: bool,
     positions: Vec<ClickPositionPointDto>,
     visible: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EdgeStopOverlayRequest {
+    enabled: bool,
+    top_width: String,
+    right_width: String,
+    bottom_width: String,
+    left_width: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EdgeStopOverlayState {
+    enabled: bool,
+    zones: Vec<OverlayRect>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -182,6 +208,7 @@ struct ProcessPickerOverlayState {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayState {
+    edge_stop: EdgeStopOverlayState,
     editable: bool,
     height: i32,
     origin_x: i32,
@@ -508,6 +535,7 @@ fn click_position_overlay_state(
     let (origin_x, origin_y, width, height) = (0, 0, 0, 0);
 
     ClickPositionOverlayState {
+        edge_stop: edge_stop_overlay_state(&overlay.edge_stop),
         editable: overlay.editable,
         height,
         origin_x,
@@ -516,6 +544,41 @@ fn click_position_overlay_state(
         process_picker,
         visible: overlay.visible,
         width,
+    }
+}
+
+fn parse_edge_stop_overlay_width(value: &str) -> i32 {
+    value.trim().parse::<i32>().unwrap_or(0).max(0)
+}
+
+fn edge_stop_widths_from_overlay(request: &EdgeStopOverlayRequest) -> EdgeStopWidths {
+    if !request.enabled {
+        return EdgeStopWidths::default();
+    }
+
+    EdgeStopWidths {
+        top: parse_edge_stop_overlay_width(&request.top_width),
+        right: parse_edge_stop_overlay_width(&request.right_width),
+        bottom: parse_edge_stop_overlay_width(&request.bottom_width),
+        left: parse_edge_stop_overlay_width(&request.left_width),
+    }
+}
+
+fn edge_stop_overlay_state(request: &EdgeStopOverlayRequest) -> EdgeStopOverlayState {
+    #[cfg(target_os = "windows")]
+    {
+        let runtime = edge_stop_runtime(edge_stop_widths_from_overlay(request));
+
+        return EdgeStopOverlayState {
+            enabled: request.enabled && !runtime.zones.is_empty(),
+            zones: runtime.zones,
+        };
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = request;
+        EdgeStopOverlayState::default()
     }
 }
 

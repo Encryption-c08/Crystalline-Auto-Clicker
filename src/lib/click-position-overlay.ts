@@ -1,41 +1,73 @@
-import type { ClickPosition } from "@/config/settings"
-import { isTauri, trackedInvoke } from "@/lib/tauri"
+import type { ClickPosition } from "@/config/settings";
+import { isTauri, trackedInvoke } from "@/lib/tauri";
 
 export const CLICK_POSITION_OVERLAY_UPDATE_EVENT =
-  "click-position-overlay:update"
+  "click-position-overlay:update";
 export const CLICK_POSITION_OVERLAY_MOVE_EVENT =
-  "click-position-overlay:move-dot"
+  "click-position-overlay:move-dot";
 
 export type ScreenPoint = {
-  x: number
-  y: number
-}
+  x: number;
+  y: number;
+};
+
+export type OverlayRect = {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+};
 
 export type ClickPositionOverlayMoveEvent = {
-  id: number
-  x: number
-  y: number
-}
+  id: number;
+  x: number;
+  y: number;
+};
 
 export type ProcessPickerOverlayState = {
-  active: boolean
-  cursorX: number
-  cursorY: number
-  label: string | null
-}
+  active: boolean;
+  cursorX: number;
+  cursorY: number;
+  label: string | null;
+};
+
+export type EdgeStopOverlayConfig = {
+  enabled: boolean;
+  topWidth: string;
+  rightWidth: string;
+  bottomWidth: string;
+  leftWidth: string;
+};
+
+export type EdgeStopOverlayState = {
+  enabled: boolean;
+  zones: OverlayRect[];
+};
 
 export type ClickPositionOverlayState = {
-  editable: boolean
-  height: number
-  originX: number
-  originY: number
-  positions: ClickPosition[]
-  processPicker: ProcessPickerOverlayState
-  visible: boolean
-  width: number
-}
+  edgeStop: EdgeStopOverlayState;
+  editable: boolean;
+  height: number;
+  originX: number;
+  originY: number;
+  positions: ClickPosition[];
+  processPicker: ProcessPickerOverlayState;
+  visible: boolean;
+  width: number;
+};
+
+export type ClickPositionOverlayRequest = {
+  edgeStop: EdgeStopOverlayConfig;
+  editable: boolean;
+  positions: ClickPosition[];
+  visible: boolean;
+};
 
 const EMPTY_OVERLAY_STATE: ClickPositionOverlayState = {
+  edgeStop: {
+    enabled: false,
+    zones: [],
+  },
   editable: false,
   height: 0,
   originX: 0,
@@ -49,49 +81,49 @@ const EMPTY_OVERLAY_STATE: ClickPositionOverlayState = {
   },
   visible: false,
   width: 0,
-}
+};
 
 export async function syncClickPositionOverlay(
-  overlay: Pick<ClickPositionOverlayState, "editable" | "positions" | "visible">
+  overlay: ClickPositionOverlayRequest,
 ) {
   if (!isTauri()) {
-    return
+    return;
   }
 
-  return trackedInvoke<void>("sync_click_position_overlay", { overlay })
+  return trackedInvoke<void>("sync_click_position_overlay", { overlay });
 }
 
 export async function getClickPositionOverlayState() {
   if (!isTauri()) {
-    return { ...EMPTY_OVERLAY_STATE }
+    return { ...EMPTY_OVERLAY_STATE };
   }
 
   return trackedInvoke<ClickPositionOverlayState>(
-    "get_click_position_overlay_state"
-  )
+    "get_click_position_overlay_state",
+  );
 }
 
 export async function getCurrentCursorPosition() {
   if (!isTauri()) {
-    return { x: 0, y: 0 } satisfies ScreenPoint
+    return { x: 0, y: 0 } satisfies ScreenPoint;
   }
 
-  return trackedInvoke<ScreenPoint>("get_current_cursor_position")
+  return trackedInvoke<ScreenPoint>("get_current_cursor_position");
 }
 
 export async function setClickPositionOverlayInteractive(interactive: boolean) {
   if (!isTauri()) {
-    return
+    return;
   }
 
   return trackedInvoke<void>("set_click_position_overlay_interactive", {
     interactive,
-  })
+  });
 }
 
 export function emptyClickPositionOverlayState() {
   return {
     ...EMPTY_OVERLAY_STATE,
     processPicker: { ...EMPTY_OVERLAY_STATE.processPicker },
-  }
+  };
 }

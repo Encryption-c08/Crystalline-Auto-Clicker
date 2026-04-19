@@ -780,7 +780,7 @@ export function SettingsPanelContent({
   }
 
   return (
-    <div className="grid h-full content-center gap-1.5 px-3 py-2">
+    <div className="grid h-full content-start gap-1.5 px-3 py-2">
       <div className="flex items-center gap-2">
         <div className="w-14 shrink-0">
           <TinyLabel>Rate</TinyLabel>

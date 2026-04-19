@@ -9,12 +9,18 @@ import type {
   DisabledDependencyTarget,
 } from "@/components/disabled-feature-dependency";
 import { DoubleClickPanel } from "@/components/double-click-panel";
+import { EdgeStopPanel } from "@/components/edge-stop-panel";
 import { JitterPanel } from "@/components/jitter-panel";
 import { ProcessFilterPanel } from "@/components/process-filter-panel";
 import { LimitsPanel } from "@/components/limits-panel";
 import { SettingsPanel } from "@/components/settings-panel";
 import { TitleBar } from "@/components/title-bar";
-import { buildAutoClickerConfig } from "@/config/runtime";
+import {
+  buildAutoClickerConfig,
+  buildEdgeStopConfig,
+  buildEdgeStopOverlayConfig,
+  hasActiveEdgeStopConfig,
+} from "@/config/runtime";
 import type { AutoClickerSettings } from "@/config/settings";
 import {
   appThemeLabels,
@@ -475,18 +481,27 @@ export default function App() {
       whitelist,
       blacklist,
     );
+    const edgeStop = buildEdgeStopConfig(settings);
+    const overlayEdgeStop = buildEdgeStopOverlayConfig(settings);
+    const clickPositionOverlayVisible =
+      settings.clickPositionDotsVisible &&
+      settings.clickPositions.length > 0 &&
+      processRulesAllowFocusedProcess;
 
     void syncClickPositionOverlay({
+      edgeStop: overlayEdgeStop,
       editable: false,
       positions: settings.clickPositions,
-      visible:
-        settings.clickPositionDotsVisible &&
-        settings.clickPositions.length > 0 &&
-        processRulesAllowFocusedProcess,
+      visible: clickPositionOverlayVisible || hasActiveEdgeStopConfig(edgeStop),
     }).catch((error) => {
       console.error("Unable to sync click position overlay", error);
     });
   }, [
+    settings.edgeStopBottomWidth,
+    settings.edgeStopEnabled,
+    settings.edgeStopLeftWidth,
+    settings.edgeStopRightWidth,
+    settings.edgeStopTopWidth,
     focusedProcessName,
     hasLoadedSettings,
     settings.processBlacklistEnabled,
@@ -790,7 +805,7 @@ export default function App() {
   }, [activeTab, simpleViewHeight, simpleViewWidth]);
 
   const advancedPanels = (
-    <div className="grid w-full grid-cols-2 items-start gap-3">
+    <div className="grid w-full grid-cols-2 items-stretch gap-3">
       <DoubleClickPanel
         onUnavailablePress={highlightDisabledDependency}
         setSettings={setSettings}
@@ -806,6 +821,7 @@ export default function App() {
         setSettings={setSettings}
         settings={settings}
       />
+      <EdgeStopPanel setSettings={setSettings} settings={settings} />
     </div>
   );
 
@@ -909,7 +925,7 @@ export default function App() {
           ) : activeTab === "advanced" ? (
             <div className="ui-scrollbar-hidden h-full overflow-y-auto px-3 pb-3 pt-3">
               <div className="mx-auto grid w-full max-w-[61rem] content-start gap-3">
-                <div className="grid items-start gap-3 [grid-template-columns:38.5rem_minmax(0,1fr)]">
+                <div className="grid items-stretch gap-3 [grid-template-columns:38.5rem_minmax(0,1fr)]">
                   <SettingsPanel
                     clickPositionControls={{
                       onAddCenteredDot: () => void addCenteredClickPosition(),

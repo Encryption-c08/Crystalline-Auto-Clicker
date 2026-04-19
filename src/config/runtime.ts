@@ -30,6 +30,25 @@ export const MIN_CLICK_LIMIT = 1;
 export const MAX_CLICK_LIMIT = 1_000_000;
 export const MIN_TIME_LIMIT = 1;
 export const MAX_TIME_LIMIT = 1_000_000;
+export const MIN_EDGE_STOP_WIDTH = 0;
+export const MAX_EDGE_STOP_WIDTH = 500;
+export const DEFAULT_EDGE_STOP_WIDTH = "20";
+
+export type EdgeStopCommandConfig = {
+  edgeStopEnabled: boolean;
+  edgeStopTopWidth: string;
+  edgeStopRightWidth: string;
+  edgeStopBottomWidth: string;
+  edgeStopLeftWidth: string;
+};
+
+export type EdgeStopOverlayConfig = {
+  enabled: boolean;
+  topWidth: string;
+  rightWidth: string;
+  bottomWidth: string;
+  leftWidth: string;
+};
 
 export type AutoClickerCommandConfig = {
   clickMode: ClickMode;
@@ -59,7 +78,18 @@ export type AutoClickerCommandConfig = {
   timeLimitEnabled: boolean;
   timeLimit: string;
   timeLimitUnit: ClickRateUnit;
+  edgeStopEnabled: boolean;
+  edgeStopTopWidth: string;
+  edgeStopRightWidth: string;
+  edgeStopBottomWidth: string;
+  edgeStopLeftWidth: string;
   clickEngine: ClickEngine;
+};
+
+export type EdgeStopFeedback = {
+  id: number;
+  x: number;
+  y: number;
 };
 
 export type AutoClickerStatus = {
@@ -69,6 +99,7 @@ export type AutoClickerStatus = {
   hotkeyPressed: boolean;
   intervalMs: number;
   lastError: string | null;
+  edgeStopFeedback: EdgeStopFeedback | null;
   workerRunning: boolean;
 };
 
@@ -220,6 +251,27 @@ export function finalizeTimeLimit(value: string) {
   return normalizeTimeLimitInput(value) || "60";
 }
 
+export function normalizeEdgeStopWidthInput(value: string) {
+  const digitsOnly = value.replace(/[^0-9]/g, "");
+
+  if (digitsOnly === "") {
+    return "";
+  }
+
+  const nextValue = Number.parseInt(digitsOnly, 10);
+  if (Number.isNaN(nextValue)) {
+    return String(MIN_EDGE_STOP_WIDTH);
+  }
+
+  return String(
+    Math.min(MAX_EDGE_STOP_WIDTH, Math.max(MIN_EDGE_STOP_WIDTH, nextValue)),
+  );
+}
+
+export function finalizeEdgeStopWidth(value: string) {
+  return normalizeEdgeStopWidthInput(value) || DEFAULT_EDGE_STOP_WIDTH;
+}
+
 export function resolveClickIntervalMs(
   clickRateMode: ClickRateMode,
   clickRate: string,
@@ -345,6 +397,57 @@ export function formatClicksPerSecond(value: number) {
   return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+export function buildEdgeStopConfig(
+  settings: Pick<
+    AutoClickerSettings,
+    | "edgeStopEnabled"
+    | "edgeStopTopWidth"
+    | "edgeStopRightWidth"
+    | "edgeStopBottomWidth"
+    | "edgeStopLeftWidth"
+  >,
+): EdgeStopCommandConfig {
+  return {
+    edgeStopEnabled: settings.edgeStopEnabled,
+    edgeStopTopWidth: finalizeEdgeStopWidth(settings.edgeStopTopWidth),
+    edgeStopRightWidth: finalizeEdgeStopWidth(settings.edgeStopRightWidth),
+    edgeStopBottomWidth: finalizeEdgeStopWidth(settings.edgeStopBottomWidth),
+    edgeStopLeftWidth: finalizeEdgeStopWidth(settings.edgeStopLeftWidth),
+  };
+}
+
+export function buildEdgeStopOverlayConfig(
+  settings: Pick<
+    AutoClickerSettings,
+    | "edgeStopEnabled"
+    | "edgeStopTopWidth"
+    | "edgeStopRightWidth"
+    | "edgeStopBottomWidth"
+    | "edgeStopLeftWidth"
+  >,
+): EdgeStopOverlayConfig {
+  return {
+    enabled: settings.edgeStopEnabled,
+    topWidth: finalizeEdgeStopWidth(settings.edgeStopTopWidth),
+    rightWidth: finalizeEdgeStopWidth(settings.edgeStopRightWidth),
+    bottomWidth: finalizeEdgeStopWidth(settings.edgeStopBottomWidth),
+    leftWidth: finalizeEdgeStopWidth(settings.edgeStopLeftWidth),
+  };
+}
+
+export function hasActiveEdgeStopConfig(config: EdgeStopCommandConfig) {
+  if (!config.edgeStopEnabled) {
+    return false;
+  }
+
+  return [
+    config.edgeStopTopWidth,
+    config.edgeStopRightWidth,
+    config.edgeStopBottomWidth,
+    config.edgeStopLeftWidth,
+  ].some((value) => Number.parseInt(value, 10) > 0);
+}
+
 export function buildAutoClickerConfig(
   settings: AutoClickerSettings,
 ): AutoClickerCommandConfig {
@@ -359,6 +462,7 @@ export function buildAutoClickerConfig(
   const clickLimit = finalizeClickLimit(settings.clickLimit);
   const timeLimit = finalizeTimeLimit(settings.timeLimit);
   const hotkeyCode = normalizeHotkeyCode(settings.hotkey.code);
+  const edgeStop = buildEdgeStopConfig(settings);
   const { blacklist: processBlacklist, whitelist: processWhitelist } =
     resolveEnabledProcessRules(settings);
 
@@ -394,6 +498,7 @@ export function buildAutoClickerConfig(
     timeLimitEnabled: settings.timeLimitEnabled,
     timeLimit,
     timeLimitUnit: settings.timeLimitUnit,
+    ...edgeStop,
     clickEngine: "throughput",
   };
 }

@@ -386,8 +386,8 @@ export function LimitsPanel({
   );
 
   return (
-    <div className="w-full rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
-      <div className="grid gap-2.5">
+    <div className="min-h-[12.5rem] w-full self-start rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
+      <div className="grid content-start gap-2.5">
         {isClickLimitAvailable && !isClickLimitActive ? (
           <DescriptionTooltip description={CLICK_LIMIT_DESCRIPTION}>
             {clickLimitSection}

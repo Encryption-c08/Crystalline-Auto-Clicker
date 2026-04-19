@@ -13,6 +13,7 @@ export type MouseActionOption = "click" | "hold";
 export type JitterMode = "random" | "fixed";
 export type ClickEngine = "classic" | "throughput";
 export type AppTheme = "dark" | "light";
+export type EdgeStopSide = "top" | "right" | "bottom" | "left";
 export type ClickPosition = {
   id: number;
   x: number;
@@ -51,6 +52,11 @@ export type AutoClickerSettings = {
   timeLimitEnabled: boolean;
   timeLimit: string;
   timeLimitUnit: ClickRateUnit;
+  edgeStopEnabled: boolean;
+  edgeStopTopWidth: string;
+  edgeStopRightWidth: string;
+  edgeStopBottomWidth: string;
+  edgeStopLeftWidth: string;
 };
 
 export type SavedHotkey = {
@@ -98,6 +104,11 @@ export type SavedAutoClickerSettings = {
   timeLimitEnabled?: boolean | null;
   timeLimit?: string | null;
   timeLimitUnit?: string | null;
+  edgeStopEnabled?: boolean | null;
+  edgeStopTopWidth?: string | null;
+  edgeStopRightWidth?: string | null;
+  edgeStopBottomWidth?: string | null;
+  edgeStopLeftWidth?: string | null;
 };
 
 export const clickRateModes: ClickRateMode[] = ["per", "every"];
@@ -106,6 +117,7 @@ export const clickRatePerUnits: ClickRateUnit[] = ["s", "m", "h", "d"];
 export const timeLimitUnits: ClickRateUnit[] = ["s", "m", "h", "d"];
 export const clickModes: ClickMode[] = ["toggle", "hold"];
 export const appThemes: AppTheme[] = ["dark", "light"];
+export const edgeStopSides: EdgeStopSide[] = ["top", "right", "bottom", "left"];
 export const mouseButtons: MouseButtonOption[] = [
   "left",
   "middle",
@@ -122,6 +134,12 @@ export const clickRateModeLabels: Record<ClickRateMode, string> = {
 export const appThemeLabels: Record<AppTheme, string> = {
   dark: "Dark",
   light: "Light",
+};
+export const edgeStopSideLabels: Record<EdgeStopSide, string> = {
+  top: "Top",
+  right: "Right",
+  bottom: "Bottom",
+  left: "Left",
 };
 export const clickRateUnitLabels: Record<ClickRateUnit, string> = {
   ms: "Milliseconds",
@@ -178,6 +196,11 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   timeLimitEnabled: false,
   timeLimit: "60",
   timeLimitUnit: "s",
+  edgeStopEnabled: false,
+  edgeStopTopWidth: "20",
+  edgeStopRightWidth: "20",
+  edgeStopBottomWidth: "20",
+  edgeStopLeftWidth: "20",
 };
 
 function resolveOption<T extends string>(
@@ -505,5 +528,25 @@ export function normalizeAutoClickerSettings(
       timeLimitUnits,
       defaultAutoClickerSettings.timeLimitUnit,
     ),
+    edgeStopEnabled:
+      typeof settings?.edgeStopEnabled === "boolean"
+        ? settings.edgeStopEnabled
+        : defaultAutoClickerSettings.edgeStopEnabled,
+    edgeStopTopWidth:
+      typeof settings?.edgeStopTopWidth === "string"
+        ? settings.edgeStopTopWidth
+        : defaultAutoClickerSettings.edgeStopTopWidth,
+    edgeStopRightWidth:
+      typeof settings?.edgeStopRightWidth === "string"
+        ? settings.edgeStopRightWidth
+        : defaultAutoClickerSettings.edgeStopRightWidth,
+    edgeStopBottomWidth:
+      typeof settings?.edgeStopBottomWidth === "string"
+        ? settings.edgeStopBottomWidth
+        : defaultAutoClickerSettings.edgeStopBottomWidth,
+    edgeStopLeftWidth:
+      typeof settings?.edgeStopLeftWidth === "string"
+        ? settings.edgeStopLeftWidth
+        : defaultAutoClickerSettings.edgeStopLeftWidth,
   };
 }

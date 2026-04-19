@@ -4,7 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import "./index.css";
 import App from "./App.tsx";
-import { ClickPositionOverlayApp } from "@/components/click-position-overlay-app";
+import { UniversalOverlayApp } from "@/overlay";
 import { isTauri, trackedInvoke } from "@/lib/tauri";
 import { ThemeProvider } from "@tauri-ui/components/theme-provider.tsx";
 import { DesktopAppGuard } from "@tauri-ui/components/desktop-app-guard.tsx";
@@ -35,7 +35,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider defaultTheme="dark" storageKey={null}>
       {isClickPositionOverlayWindow() ? (
-        <ClickPositionOverlayApp />
+        <UniversalOverlayApp />
       ) : (
         <>
           <DesktopAppGuard />
