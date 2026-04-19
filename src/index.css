@@ -245,7 +245,86 @@ body {
   .ui-scrollbar-thin::-webkit-scrollbar-corner {
     background: transparent;
   }
-}
+
+  .ui-range-slider {
+    appearance: none;
+    width: 100%;
+    height: 0.5rem;
+    cursor: pointer;
+    background: transparent;
+    outline: none;
+  }
+
+  .ui-range-slider:focus,
+  .ui-range-slider:focus-visible {
+    outline: none;
+  }
+
+  .ui-range-slider::-webkit-slider-runnable-track {
+    height: 0.5rem;
+    border-radius: 999px;
+    background:
+      linear-gradient(var(--theme-accent), var(--theme-accent)) 0 / var(--slider-fill, 100%) 100%
+        no-repeat,
+      color-mix(in srgb, var(--theme-panel-border) 72%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-panel-border) 88%, transparent);
+  }
+
+  .ui-range-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 0.95rem;
+    height: 0.95rem;
+    margin-top: calc((0.5rem - 0.95rem) / 2);
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, white 72%, var(--theme-panel-border));
+    background: var(--theme-accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, black 18%, transparent);
+  }
+
+  .ui-range-slider::-moz-range-track {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--theme-panel-border) 72%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-panel-border) 88%, transparent);
+  }
+
+  .ui-range-slider::-moz-range-progress {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--theme-accent);
+  }
+
+  .ui-range-slider::-moz-range-thumb {
+    width: 0.95rem;
+    height: 0.95rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, white 72%, var(--theme-panel-border));
+    background: var(--theme-accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, black 18%, transparent);
+  }
+
+  .ui-themed-tooltip {
+    color: var(--theme-text);
+    background: color-mix(in srgb, var(--theme-panel) 94%, var(--background));
+    border-color: color-mix(
+      in srgb,
+      var(--theme-panel-border) 88%,
+      transparent
+    );
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.42),
+      0 0 0 1px color-mix(in srgb, var(--theme-panel-border) 14%, transparent);
+  }
+
+  .ui-themed-tooltip-arrow {
+    background: color-mix(in srgb, var(--theme-panel) 94%, var(--background));
+    border-color: color-mix(
+      in srgb,
+      var(--theme-panel-border) 88%,
+      transparent
+    );
+  }
+  }
 
 [data-tauri-drag-region] {
   app-region: drag;

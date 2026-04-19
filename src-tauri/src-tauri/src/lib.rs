@@ -18,8 +18,9 @@ use windows_sys::Win32::{
     Media::{timeBeginPeriod, timeEndPeriod, TIMERR_NOERROR},
     UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GetCursorPos, GetSystemMetrics, GetWindowLongPtrW,
-        SetWindowLongPtrW, GWLP_WNDPROC, SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
+        SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, GWLP_WNDPROC, LWA_ALPHA,
+        SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN, WM_SYSCOMMAND, WS_EX_LAYERED,
     },
 };
 
@@ -42,6 +43,7 @@ use process_filters::{
 struct AppState {
     auto_clicker: AutoClickerController,
     click_position_overlay: Mutex<ClickPositionOverlayState>,
+    click_position_overlay_interactive: Mutex<bool>,
     click_position_overlay_loaded: Mutex<bool>,
     close_to_tray_enabled: Mutex<bool>,
     main_window_hidden_to_tray: Mutex<bool>,
@@ -54,6 +56,9 @@ const CLICK_POSITION_OVERLAY_WINDOW_LABEL: &str = "click-position-overlay";
 const MAIN_TRAY_ICON_ID: &str = "main-tray";
 const MAIN_TRAY_OPEN_ID: &str = "main-tray-open";
 const MAIN_TRAY_QUIT_ID: &str = "main-tray-quit";
+const DEFAULT_WINDOW_OPACITY_PERCENT: f64 = 100.0;
+const MIN_WINDOW_OPACITY_PERCENT: f64 = 40.0;
+const MAX_WINDOW_OPACITY_PERCENT: f64 = 100.0;
 
 #[cfg(target_os = "windows")]
 static MAIN_WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -104,8 +109,25 @@ struct PersistedClickPosition {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PersistedThemeColors {
+    accent: Option<String>,
+    background: Option<String>,
+    edge_stop_fill: Option<String>,
+    edge_stop_line: Option<String>,
+    muted_text: Option<String>,
+    panel: Option<String>,
+    panel_border: Option<String>,
+    text: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedAutoClickerSettings {
     theme: Option<String>,
+    theme_preset: Option<String>,
+    theme_custom_colors_enabled: Option<bool>,
+    theme_colors: Option<PersistedThemeColors>,
+    window_opacity: Option<f64>,
     close_to_tray: Option<bool>,
     process_whitelist_enabled: Option<bool>,
     process_whitelist: Option<Vec<String>>,
@@ -144,6 +166,27 @@ struct PersistedAutoClickerSettings {
     edge_stop_left_width: Option<String>,
 }
 
+fn normalize_window_opacity_percent(opacity: Option<f64>) -> f64 {
+    opacity
+        .filter(|value| value.is_finite())
+        .unwrap_or(DEFAULT_WINDOW_OPACITY_PERCENT)
+        .clamp(MIN_WINDOW_OPACITY_PERCENT, MAX_WINDOW_OPACITY_PERCENT)
+}
+
+fn resolve_window_opacity_percent(settings: Option<&PersistedAutoClickerSettings>) -> f64 {
+    normalize_window_opacity_percent(settings.and_then(|saved_settings| saved_settings.window_opacity))
+}
+
+fn load_saved_window_opacity_percent(app: &tauri::AppHandle) -> f64 {
+    match load_auto_clicker_settings(app.clone()) {
+        Ok(settings) => resolve_window_opacity_percent(settings.as_ref()),
+        Err(error) => {
+            log::warn!("unable to load saved window opacity: {error}");
+            DEFAULT_WINDOW_OPACITY_PERCENT
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WindowFrameRequest {
@@ -176,6 +219,7 @@ struct ClickPositionOverlayRequest {
     edge_stop: EdgeStopOverlayRequest,
     editable: bool,
     positions: Vec<ClickPositionPointDto>,
+    theme: OverlayVisualTheme,
     visible: bool,
 }
 
@@ -205,6 +249,28 @@ struct ProcessPickerOverlayState {
     label: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayVisualTheme {
+    edge_stop_fill: String,
+    edge_stop_line: String,
+    process_picker_background: String,
+    process_picker_border: String,
+    process_picker_text: String,
+}
+
+impl Default for OverlayVisualTheme {
+    fn default() -> Self {
+        Self {
+            edge_stop_fill: "#8ED8FF".to_string(),
+            edge_stop_line: "#ECF7FF".to_string(),
+            process_picker_background: "#1C2430".to_string(),
+            process_picker_border: "#334155".to_string(),
+            process_picker_text: "#E8EDF6".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayState {
@@ -215,6 +281,7 @@ struct ClickPositionOverlayState {
     origin_y: i32,
     positions: Vec<ClickPositionPointDto>,
     process_picker: ProcessPickerOverlayState,
+    theme: OverlayVisualTheme,
     visible: bool,
     width: i32,
 }
@@ -282,6 +349,26 @@ fn is_main_window_hidden_to_tray(state: &AppState) -> bool {
         .main_window_hidden_to_tray
         .lock()
         .map(|hidden| *hidden)
+        .unwrap_or(false)
+}
+
+fn update_click_position_overlay_interactive_state(
+    state: &AppState,
+    interactive: bool,
+) -> Result<(), String> {
+    let mut click_position_overlay_interactive = state
+        .click_position_overlay_interactive
+        .lock()
+        .map_err(|_| "Failed to lock click position overlay interactivity state".to_string())?;
+    *click_position_overlay_interactive = interactive;
+    Ok(())
+}
+
+fn is_click_position_overlay_interactive(state: &AppState) -> bool {
+    state
+        .click_position_overlay_interactive
+        .lock()
+        .map(|interactive| *interactive)
         .unwrap_or(false)
 }
 
@@ -417,11 +504,13 @@ fn setup_main_tray_icon(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn initialize_close_to_tray_state(app: &tauri::AppHandle, state: &AppState) {
-    let close_to_tray_enabled = load_auto_clicker_settings(app.clone())
-        .ok()
-        .flatten()
-        .and_then(|settings| settings.close_to_tray)
+fn initialize_close_to_tray_state(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    settings: Option<&PersistedAutoClickerSettings>,
+) {
+    let close_to_tray_enabled = settings
+        .and_then(|saved_settings| saved_settings.close_to_tray)
         .unwrap_or(false);
 
     if let Err(error) = update_close_to_tray_enabled(state, close_to_tray_enabled) {
@@ -431,6 +520,35 @@ fn initialize_close_to_tray_state(app: &tauri::AppHandle, state: &AppState) {
     if let Err(error) = sync_main_tray_icon_visibility(app, state) {
         log::warn!("unable to initialize tray visibility: {error}");
     }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_window_opacity(hwnd: HWND, opacity_percent: f64) -> Result<(), String> {
+    let current_ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+    let layered_ex_style = current_ex_style | WS_EX_LAYERED as isize;
+
+    if layered_ex_style != current_ex_style {
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_ex_style);
+        }
+    }
+
+    let alpha = ((opacity_percent / 100.0) * 255.0).round() as u8;
+    if unsafe { SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) } == 0 {
+        return Err("Unable to apply main window opacity.".to_string());
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn set_main_window_opacity_inner(window: &WebviewWindow, opacity_percent: f64) -> Result<(), String> {
+    let normalized_opacity = normalize_window_opacity_percent(Some(opacity_percent));
+    let hwnd = window
+        .hwnd()
+        .map_err(|error| format!("Unable to access main window handle: {error}"))?;
+
+    apply_window_opacity(hwnd.0 as HWND, normalized_opacity)
 }
 
 #[cfg(target_os = "windows")]
@@ -486,7 +604,7 @@ fn ensure_click_position_overlay_window(
     .build()
     .map_err(|error| format!("Unable to create click position overlay: {error}"))?;
 
-    configure_click_position_overlay_window(&window, &ClickPositionOverlayState::default())?;
+    configure_click_position_overlay_window(&window, &ClickPositionOverlayState::default(), false)?;
 
     Ok((window, true))
 }
@@ -509,13 +627,16 @@ fn sync_click_position_overlay_window_bounds(window: &WebviewWindow) -> Result<(
 fn configure_click_position_overlay_window(
     window: &WebviewWindow,
     overlay_state: &ClickPositionOverlayState,
+    interactive: bool,
 ) -> Result<(), String> {
     sync_click_position_overlay_window_bounds(window)?;
     window
         .set_focusable(false)
         .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))?;
+
+    let accepts_cursor_events = overlay_state.editable || interactive;
     window
-        .set_ignore_cursor_events(!overlay_state.editable)
+        .set_ignore_cursor_events(!accepts_cursor_events)
         .map_err(|error| format!("Unable to configure click position overlay: {error}"))?;
 
     Ok(())
@@ -542,6 +663,7 @@ fn click_position_overlay_state(
         origin_y,
         positions: overlay.positions,
         process_picker,
+        theme: overlay.theme,
         visible: overlay.visible,
         width,
     }
@@ -601,6 +723,8 @@ fn apply_click_position_overlay_state(
     overlay_state: &ClickPositionOverlayState,
 ) -> Result<(), String> {
     if !overlay_should_be_visible(overlay_state) {
+        let _ = update_click_position_overlay_interactive_state(state, false);
+
         if let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
             let overlay_loaded = state
                 .click_position_overlay_loaded
@@ -608,7 +732,7 @@ fn apply_click_position_overlay_state(
                 .map(|loaded| *loaded)
                 .unwrap_or(false);
 
-            let _ = configure_click_position_overlay_window(&window, overlay_state);
+            let _ = configure_click_position_overlay_window(&window, overlay_state, false);
             if overlay_loaded {
                 let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, overlay_state);
             }
@@ -624,8 +748,9 @@ fn apply_click_position_overlay_state(
         .lock()
         .map(|loaded| *loaded)
         .unwrap_or(false);
+    let interactive = is_click_position_overlay_interactive(state);
 
-    configure_click_position_overlay_window(&window, overlay_state)?;
+    configure_click_position_overlay_window(&window, overlay_state, interactive)?;
 
     if created || !overlay_loaded {
         return Ok(());
@@ -858,6 +983,15 @@ fn notify_webview_ready(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if window.label() == "main" {
+        #[cfg(target_os = "windows")]
+        {
+            if let Err(error) =
+                set_main_window_opacity_inner(&window, load_saved_window_opacity_percent(&window.app_handle()))
+            {
+                log::warn!("unable to apply main window opacity when webview became ready: {error}");
+            }
+        }
+
         return window
             .show()
             .map_err(|error| format!("Unable to show main window: {error}"));
@@ -875,8 +1009,9 @@ fn notify_webview_ready(
                 .lock()
                 .map(|overlay| overlay.clone())
                 .unwrap_or_default();
+            let interactive = is_click_position_overlay_interactive(state.inner());
 
-            configure_click_position_overlay_window(&window, &overlay_state)?;
+            configure_click_position_overlay_window(&window, &overlay_state, interactive)?;
             let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, &overlay_state);
 
             if overlay_should_be_visible(&overlay_state) {
@@ -899,18 +1034,16 @@ fn notify_webview_ready(
 fn set_click_position_overlay_interactive(
     app: tauri::AppHandle,
     interactive: bool,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    update_click_position_overlay_interactive_state(state.inner(), interactive)?;
+
     let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) else {
         return Ok(());
     };
 
-    sync_click_position_overlay_window_bounds(&window)?;
-    window
-        .set_focusable(false)
-        .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))?;
-    window
-        .set_ignore_cursor_events(!interactive)
-        .map_err(|error| format!("Unable to update click position overlay interactivity: {error}"))
+    let overlay_state = stored_click_position_overlay_state(state.inner())?;
+    configure_click_position_overlay_window(&window, &overlay_state, interactive)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1038,6 +1171,19 @@ fn sync_main_window_frame(
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn set_main_window_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(), String> {
+    let window = main_window(&app)?;
+    set_main_window_opacity_inner(&window, opacity)
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_main_window_opacity(_app: tauri::AppHandle, _opacity: f64) -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
 fn hide_main_window_to_tray(
     app: tauri::AppHandle,
@@ -1135,16 +1281,29 @@ pub fn run() {
         .manage(AppState {
             auto_clicker: AutoClickerController::new(),
             click_position_overlay: Mutex::new(ClickPositionOverlayState::default()),
+            click_position_overlay_interactive: Mutex::new(false),
             click_position_overlay_loaded: Mutex::new(false),
             close_to_tray_enabled: Mutex::new(false),
             main_window_hidden_to_tray: Mutex::new(false),
         })
         .setup(|app| {
+            let startup_settings = match load_auto_clicker_settings(app.handle().clone()) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    log::warn!("unable to load saved settings during startup: {error}");
+                    None
+                }
+            };
+
             if let Err(error) = setup_main_tray_icon(&app.handle()) {
                 log::warn!("unable to initialize tray icon: {error}");
             }
 
-            initialize_close_to_tray_state(&app.handle(), app.state::<AppState>().inner());
+            initialize_close_to_tray_state(
+                &app.handle(),
+                app.state::<AppState>().inner(),
+                startup_settings.as_ref(),
+            );
 
             #[cfg(target_os = "windows")]
             {
@@ -1155,6 +1314,13 @@ pub fn run() {
                             .auto_clicker
                             .set_main_window_handle(hwnd.0 as isize);
                     }
+
+                    if let Err(error) = set_main_window_opacity_inner(
+                        &main_window,
+                        resolve_window_opacity_percent(startup_settings.as_ref()),
+                    ) {
+                        log::warn!("unable to initialize main window opacity: {error}");
+                    }
                 }
 
                 if let Some(overlay_window) =
@@ -1163,6 +1329,7 @@ pub fn run() {
                     let _ = configure_click_position_overlay_window(
                         &overlay_window,
                         &ClickPositionOverlayState::default(),
+                        false,
                     );
                     let _ = overlay_window.hide();
                 }
@@ -1198,6 +1365,7 @@ pub fn run() {
             read_pressed_keyboard_hotkey,
             read_global_hotkey_state,
             sync_main_window_frame,
+            set_main_window_opacity,
             hide_main_window_to_tray
         ])
         .on_window_event(|window, event| {
@@ -1251,6 +1419,15 @@ pub fn run() {
                         .auto_clicker
                         .set_main_window_handle(hwnd.0 as isize);
                 }
+
+                if let Ok(window) = main_window(&webview.app_handle()) {
+                    if let Err(error) = set_main_window_opacity_inner(
+                        &window,
+                        load_saved_window_opacity_percent(&webview.app_handle()),
+                    ) {
+                        log::warn!("unable to reapply main window opacity after page load: {error}");
+                    }
+                }
             }
 
             if webview.label() == CLICK_POSITION_OVERLAY_WINDOW_LABEL
@@ -1265,6 +1442,7 @@ pub fn run() {
                         let _ = configure_click_position_overlay_window(
                             &window,
                             &ClickPositionOverlayState::default(),
+                            false,
                         );
                         let _ = window.hide();
                     }

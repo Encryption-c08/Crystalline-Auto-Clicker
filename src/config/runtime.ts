@@ -435,6 +435,43 @@ export function buildEdgeStopOverlayConfig(
   };
 }
 
+export function buildEdgeStopPreviewOverlayConfig(
+  settings: Pick<
+    AutoClickerSettings,
+    | "edgeStopTopWidth"
+    | "edgeStopRightWidth"
+    | "edgeStopBottomWidth"
+    | "edgeStopLeftWidth"
+  >,
+): EdgeStopOverlayConfig {
+  const previewConfig: EdgeStopOverlayConfig = {
+    enabled: true,
+    topWidth: finalizeEdgeStopWidth(settings.edgeStopTopWidth),
+    rightWidth: finalizeEdgeStopWidth(settings.edgeStopRightWidth),
+    bottomWidth: finalizeEdgeStopWidth(settings.edgeStopBottomWidth),
+    leftWidth: finalizeEdgeStopWidth(settings.edgeStopLeftWidth),
+  };
+
+  const hasVisibleZone = [
+    previewConfig.topWidth,
+    previewConfig.rightWidth,
+    previewConfig.bottomWidth,
+    previewConfig.leftWidth,
+  ].some((value) => Number.parseInt(value, 10) > 0);
+
+  if (hasVisibleZone) {
+    return previewConfig;
+  }
+
+  return {
+    enabled: true,
+    topWidth: DEFAULT_EDGE_STOP_WIDTH,
+    rightWidth: DEFAULT_EDGE_STOP_WIDTH,
+    bottomWidth: DEFAULT_EDGE_STOP_WIDTH,
+    leftWidth: DEFAULT_EDGE_STOP_WIDTH,
+  };
+}
+
 export function hasActiveEdgeStopConfig(config: EdgeStopCommandConfig) {
   if (!config.edgeStopEnabled) {
     return false;

@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { listen } from "@tauri-apps/api/event";
 import { Settings2Icon } from "lucide-react";
 
 import { ClickDurationPanel } from "@/components/click-duration-panel";
+import { CloseToTrayPanel } from "@/components/close-to-tray-panel";
 import type {
   DisabledDependencyCue,
   DisabledDependencyTarget,
@@ -14,22 +15,27 @@ import { JitterPanel } from "@/components/jitter-panel";
 import { ProcessFilterPanel } from "@/components/process-filter-panel";
 import { LimitsPanel } from "@/components/limits-panel";
 import { SettingsPanel } from "@/components/settings-panel";
+import { ThemePanel } from "@/components/theme-panel";
 import { TitleBar } from "@/components/title-bar";
 import {
   buildAutoClickerConfig,
   buildEdgeStopConfig,
   buildEdgeStopOverlayConfig,
+  buildEdgeStopPreviewOverlayConfig,
   hasActiveEdgeStopConfig,
 } from "@/config/runtime";
 import type { AutoClickerSettings } from "@/config/settings";
 import {
-  appThemeLabels,
-  appThemes,
   defaultAutoClickerSettings,
   isProcessAllowedByRules,
   normalizeAutoClickerSettings,
   resolveEnabledProcessRules,
 } from "@/config/settings";
+import {
+  applyThemeCssVariables,
+  buildOverlayVisualTheme,
+  buildThemeCssVariables,
+} from "@/config/theme";
 import { configureAutoClicker } from "@/lib/auto-clicker";
 import {
   CLICK_POSITION_OVERLAY_MOVE_EVENT,
@@ -49,14 +55,10 @@ import {
   loadSavedAutoClickerSettings,
   saveAutoClickerSettings,
 } from "@/lib/settings-store";
+import { setMainWindowOpacity } from "@/lib/window-opacity";
 import { matchesKeyboardEventHotkey } from "@/input/hotkeys";
 import { isTauri, trackedInvoke } from "@/lib/tauri";
 import { useTheme } from "@tauri-ui/components/theme-provider.tsx";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@tauri-ui/components/ui/toggle-group";
-import { Checkbox } from "@tauri-ui/components/ui/checkbox";
 import { cn } from "@tauri-ui/lib/utils";
 
 const DEFAULT_WINDOW_HEIGHT = 680;
@@ -221,8 +223,19 @@ export default function App() {
   const [processListError, setProcessListError] = useState<string | null>(null);
   const [simpleViewWidth, setSimpleViewWidth] = useState(0);
   const [simpleViewHeight, setSimpleViewHeight] = useState(0);
+  const [isMainWindowReady, setIsMainWindowReady] = useState(false);
+  const [edgeStopThemePreviewActive, setEdgeStopThemePreviewActive] =
+    useState(false);
   const hasShownMainWindowRef = useRef(false);
   const simplePanelMeasureRef = useRef<HTMLDivElement | null>(null);
+  const resolvedThemeStyles = useMemo(
+    () => buildThemeCssVariables(settings.themeColors),
+    [settings.themeColors],
+  );
+  const overlayVisualTheme = useMemo(
+    () => buildOverlayVisualTheme(settings.themeColors),
+    [settings.themeColors],
+  );
 
   function highlightDisabledDependency(target: DisabledDependencyTarget) {
     setDisabledDependencyCue({ target });
@@ -306,6 +319,10 @@ export default function App() {
       setTheme(settings.theme);
     }
   }, [setTheme, settings.theme, theme]);
+
+  useLayoutEffect(() => {
+    applyThemeCssVariables(document.documentElement, resolvedThemeStyles);
+  }, [resolvedThemeStyles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -471,6 +488,16 @@ export default function App() {
   }, [hasLoadedSettings, settings]);
 
   useEffect(() => {
+    if (!hasLoadedSettings || !isMainWindowReady) {
+      return;
+    }
+
+    void setMainWindowOpacity(settings.windowOpacity).catch((error) => {
+      console.error("Unable to update main window opacity", error);
+    });
+  }, [hasLoadedSettings, isMainWindowReady, settings.windowOpacity]);
+
+  useEffect(() => {
     if (!hasLoadedSettings) {
       return;
     }
@@ -482,7 +509,9 @@ export default function App() {
       blacklist,
     );
     const edgeStop = buildEdgeStopConfig(settings);
-    const overlayEdgeStop = buildEdgeStopOverlayConfig(settings);
+    const overlayEdgeStop = edgeStopThemePreviewActive
+      ? buildEdgeStopPreviewOverlayConfig(settings)
+      : buildEdgeStopOverlayConfig(settings);
     const clickPositionOverlayVisible =
       settings.clickPositionDotsVisible &&
       settings.clickPositions.length > 0 &&
@@ -492,16 +521,23 @@ export default function App() {
       edgeStop: overlayEdgeStop,
       editable: false,
       positions: settings.clickPositions,
-      visible: clickPositionOverlayVisible || hasActiveEdgeStopConfig(edgeStop),
+      theme: overlayVisualTheme,
+      visible:
+        clickPositionOverlayVisible ||
+        hasActiveEdgeStopConfig(edgeStop) ||
+        edgeStopThemePreviewActive,
     }).catch((error) => {
       console.error("Unable to sync click position overlay", error);
     });
   }, [
+    edgeStopThemePreviewActive,
+    overlayVisualTheme,
     settings.edgeStopBottomWidth,
     settings.edgeStopEnabled,
     settings.edgeStopLeftWidth,
     settings.edgeStopRightWidth,
     settings.edgeStopTopWidth,
+    settings.themeColors,
     focusedProcessName,
     hasLoadedSettings,
     settings.processBlacklistEnabled,
@@ -752,6 +788,7 @@ export default function App() {
       try {
         await trackedInvoke<void>("notify_webview_ready");
         hasShownMainWindowRef.current = true;
+        setIsMainWindowReady(true);
       } catch (error) {
         if (!cancelled) {
           console.error("Unable to show main window after frame sync", error);
@@ -827,66 +864,13 @@ export default function App() {
 
   const settingsPanel = (
     <div className="mx-auto grid w-full max-w-[61rem] items-start gap-3 md:grid-cols-2">
-      <div className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors">
-        <div className="min-w-0 pr-2">
-          <p className="text-base font-semibold text-foreground">Theme</p>
-          <p className="text-sm text-muted-foreground">
-            Choose between dark and light mode.
-          </p>
-        </div>
+      <ThemePanel
+        onEdgeStopPreviewActiveChange={setEdgeStopThemePreviewActive}
+        setSettings={setSettings}
+        settings={settings}
+      />
 
-        <ToggleGroup
-          className="shrink-0 overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
-          onValueChange={(value) => {
-            if (!value) {
-              return;
-            }
-
-            setSettings((current) => ({
-              ...current,
-              theme: value as AutoClickerSettings["theme"],
-            }));
-          }}
-          size="sm"
-          type="single"
-          value={settings.theme}
-          variant="default"
-        >
-          {appThemes.map((value) => (
-            <ToggleGroupItem
-              aria-label={`Set theme to ${appThemeLabels[value]}`}
-              className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
-              key={value}
-              value={value}
-            >
-              {appThemeLabels[value]}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
-
-      <label className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/35 px-3 py-2 transition-colors hover:bg-card/45">
-        <div className="min-w-0 pr-2">
-          <p className="text-base font-semibold text-foreground">
-            Close to Tray
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Hide the app to the system tray when it is minimized.
-          </p>
-        </div>
-
-        <Checkbox
-          aria-label="Enable close to tray"
-          checked={settings.closeToTray}
-          className="shrink-0"
-          onCheckedChange={(checked) => {
-            setSettings((current) => ({
-              ...current,
-              closeToTray: checked === true,
-            }));
-          }}
-        />
-      </label>
+      <CloseToTrayPanel setSettings={setSettings} settings={settings} />
 
       <div className="md:col-span-2">
         <ProcessFilterPanel

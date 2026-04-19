@@ -1,4 +1,6 @@
 import type { EdgeStopOverlayState } from "@/lib/click-position-overlay";
+import type { OverlayVisualTheme } from "@/config/theme";
+import { withAlpha } from "@/lib/color";
 
 type OverlayZone = EdgeStopOverlayState["zones"][number];
 
@@ -49,7 +51,12 @@ function horizontalZoneConnections(zone: OverlayZone, zones: OverlayZone[]) {
     }
 
     if (
-      !rangesOverlap(zone.y, zoneBottom(zone), otherZone.y, zoneBottom(otherZone))
+      !rangesOverlap(
+        zone.y,
+        zoneBottom(zone),
+        otherZone.y,
+        zoneBottom(otherZone),
+      )
     ) {
       continue;
     }
@@ -138,19 +145,21 @@ export function UniversalEdgeStopOverlay({
   originX,
   originY,
   scaleFactor,
+  theme,
 }: {
   edgeStop: EdgeStopOverlayState;
   originX: number;
   originY: number;
   scaleFactor: number;
+  theme: OverlayVisualTheme;
 }) {
   if (!edgeStop.enabled || edgeStop.zones.length === 0) {
     return null;
   }
 
-  const lineColor = "rgba(255,255,255,0.72)";
-  const fillColor = "rgba(255,255,255,0.1)";
-  const fillShadow = "0 0 24px rgba(255,255,255,0.1)";
+  const lineColor = withAlpha(theme.edgeStopLine, 0.72);
+  const fillColor = withAlpha(theme.edgeStopFill, 0.18);
+  const fillShadow = `0 0 24px ${withAlpha(theme.edgeStopFill, 0.24)}`;
 
   return (
     <>
@@ -166,21 +175,20 @@ export function UniversalEdgeStopOverlay({
         const verticalConnections = !isHorizontal
           ? verticalZoneConnections(zone, edgeStop.zones)
           : null;
-        const verticalFillTop =
-          !isHorizontal ? (verticalConnections?.topClip ?? 0) / scaleFactor : 0;
-        const verticalFillBottom =
-          !isHorizontal
-            ? (verticalConnections?.bottomClip ?? 0) / scaleFactor
-            : 0;
-        const verticalFillHeight =
-          !isHorizontal
-            ? Math.max(
-                0,
-                zone.height -
-                  (verticalConnections?.topClip ?? 0) -
-                  (verticalConnections?.bottomClip ?? 0),
-              ) / scaleFactor
-            : zone.height / scaleFactor;
+        const verticalFillTop = !isHorizontal
+          ? (verticalConnections?.topClip ?? 0) / scaleFactor
+          : 0;
+        const verticalFillBottom = !isHorizontal
+          ? (verticalConnections?.bottomClip ?? 0) / scaleFactor
+          : 0;
+        const verticalFillHeight = !isHorizontal
+          ? Math.max(
+              0,
+              zone.height -
+                (verticalConnections?.topClip ?? 0) -
+                (verticalConnections?.bottomClip ?? 0),
+            ) / scaleFactor
+          : zone.height / scaleFactor;
         const shouldSuppressFillShadow =
           !isHorizontal &&
           ((verticalConnections?.topClip ?? 0) > 0 ||
@@ -191,40 +199,37 @@ export function UniversalEdgeStopOverlay({
           verticalFillBottom > 0 ? Math.max(0, verticalFillBottom - 1) : 0;
         const horizontalInnerLineLeft =
           ((horizontalConnections?.innerSide ?? null) !== null
-            ? horizontalConnections?.leftClip ?? 0
+            ? (horizontalConnections?.leftClip ?? 0)
             : 0) / scaleFactor;
         const hasHorizontalInnerClip =
           (horizontalConnections?.innerSide ?? null) !== null;
         const horizontalLeftConnected =
-          hasHorizontalInnerClip && (horizontalConnections?.leftConnected ?? false);
+          hasHorizontalInnerClip &&
+          (horizontalConnections?.leftConnected ?? false);
         const horizontalRightConnected =
           hasHorizontalInnerClip &&
           (horizontalConnections?.rightConnected ?? false);
-        const horizontalLineLeft =
-          hasHorizontalInnerClip
-            ? Math.max(
-                0,
-                horizontalInnerLineLeft -
-                  (horizontalLeftConnected ? 1 : 0),
-              )
-            : 0;
-        const horizontalLineRight =
-          hasHorizontalInnerClip
-            ? Math.max(
-                0,
-                ((horizontalConnections?.rightClip ?? 0) / scaleFactor) -
-                  (horizontalRightConnected ? 1 : 0),
-              )
-            : 0;
-        const horizontalLineWidth =
-          hasHorizontalInnerClip
-            ? Math.max(
-                0,
-                zone.width / scaleFactor -
-                  horizontalLineLeft -
-                  horizontalLineRight,
-              )
-            : zone.width / scaleFactor;
+        const horizontalLineLeft = hasHorizontalInnerClip
+          ? Math.max(
+              0,
+              horizontalInnerLineLeft - (horizontalLeftConnected ? 1 : 0),
+            )
+          : 0;
+        const horizontalLineRight = hasHorizontalInnerClip
+          ? Math.max(
+              0,
+              (horizontalConnections?.rightClip ?? 0) / scaleFactor -
+                (horizontalRightConnected ? 1 : 0),
+            )
+          : 0;
+        const horizontalLineWidth = hasHorizontalInnerClip
+          ? Math.max(
+              0,
+              zone.width / scaleFactor -
+                horizontalLineLeft -
+                horizontalLineRight,
+            )
+          : zone.width / scaleFactor;
 
         return (
           <div

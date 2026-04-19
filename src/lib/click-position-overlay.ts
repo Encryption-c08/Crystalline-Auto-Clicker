@@ -1,4 +1,8 @@
 import type { ClickPosition } from "@/config/settings";
+import {
+  defaultOverlayVisualTheme,
+  type OverlayVisualTheme,
+} from "@/config/theme";
 import { isTauri, trackedInvoke } from "@/lib/tauri";
 
 export const CLICK_POSITION_OVERLAY_UPDATE_EVENT =
@@ -52,6 +56,7 @@ export type ClickPositionOverlayState = {
   originY: number;
   positions: ClickPosition[];
   processPicker: ProcessPickerOverlayState;
+  theme: OverlayVisualTheme;
   visible: boolean;
   width: number;
 };
@@ -60,6 +65,7 @@ export type ClickPositionOverlayRequest = {
   edgeStop: EdgeStopOverlayConfig;
   editable: boolean;
   positions: ClickPosition[];
+  theme: OverlayVisualTheme;
   visible: boolean;
 };
 
@@ -79,6 +85,7 @@ const EMPTY_OVERLAY_STATE: ClickPositionOverlayState = {
     cursorY: 0,
     label: null,
   },
+  theme: { ...defaultOverlayVisualTheme },
   visible: false,
   width: 0,
 };
@@ -125,5 +132,6 @@ export function emptyClickPositionOverlayState() {
   return {
     ...EMPTY_OVERLAY_STATE,
     processPicker: { ...EMPTY_OVERLAY_STATE.processPicker },
+    theme: { ...EMPTY_OVERLAY_STATE.theme },
   };
 }

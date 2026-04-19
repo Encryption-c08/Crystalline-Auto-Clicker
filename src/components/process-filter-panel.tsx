@@ -203,7 +203,7 @@ function HoverDescription({
                 top: layout?.top ?? -9999,
               }}
               className={cn(
-                "pointer-events-none fixed z-[250] rounded-md border border-white/12 bg-zinc-950/98 px-3 py-1.5 text-[12px] font-medium leading-4 text-zinc-50 shadow-[0_18px_40px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.03)] backdrop-blur-sm transition-opacity duration-120",
+                "ui-themed-tooltip pointer-events-none fixed z-[250] rounded-md border px-3 py-1.5 text-[12px] font-medium leading-4 backdrop-blur-sm transition-opacity duration-120",
                 layout ? "opacity-100" : "opacity-0",
               )}
               role="tooltip"
@@ -222,7 +222,7 @@ function HoverDescription({
                 <span
                   style={{ left: layout.arrowLeft }}
                   className={cn(
-                    "absolute h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-white/12 bg-zinc-950/98",
+                    "ui-themed-tooltip-arrow absolute h-2.5 w-2.5 -translate-x-1/2 rotate-45",
                     layout.placement === "top"
                       ? "top-full -translate-y-[5px] border-r border-b"
                       : "bottom-full translate-y-[5px] border-l border-t",

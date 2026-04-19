@@ -18,6 +18,7 @@ import {
   getCurrentCursorPosition,
   setClickPositionOverlayInteractive,
 } from "@/lib/click-position-overlay";
+import { withAlpha } from "@/lib/color";
 import { isTauri } from "@/lib/tauri";
 import { UniversalEdgeStopOverlay } from "@/overlay/edge-stop-overlay";
 import { UniversalEdgeStopTouchBloom } from "@/overlay/edge-stop-touch-bloom";
@@ -25,25 +26,39 @@ import { useEdgeStopTouchFeedback } from "@/overlay/use-edge-stop-touch-feedback
 import { cn } from "@tauri-ui/lib/utils";
 
 const DOT_HIT_RADIUS = 22;
+const DOT_HOVER_STICKY_RADIUS = 34;
 const CURSOR_POLL_MS = 20;
 const CURSOR_PICKER_OFFSET_X = 18;
 const CURSOR_PICKER_OFFSET_Y = 24;
 const CLICK_POSITION_MARKER_BACKGROUND =
   "radial-gradient(circle at center, rgba(0,0,0,0) 0 34%, rgba(255,255,255,0.96) 34% 58%, rgba(10,10,10,0.96) 58% 100%)";
 
-function findNearbyDotId(x: number, y: number, positions: ClickPosition[]) {
+function findNearbyDotId(
+  x: number,
+  y: number,
+  positions: ClickPosition[],
+  preferredId: number | null,
+) {
   let nearestId: number | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
+  let preferredDistance = Number.POSITIVE_INFINITY;
 
   for (const position of positions) {
     const deltaX = position.x - x;
     const deltaY = position.y - y;
     const distance = Math.hypot(deltaX, deltaY);
+    if (position.id === preferredId) {
+      preferredDistance = distance;
+    }
 
     if (distance <= DOT_HIT_RADIUS && distance < nearestDistance) {
       nearestId = position.id;
       nearestDistance = distance;
     }
+  }
+
+  if (nearestId === null && preferredDistance <= DOT_HOVER_STICKY_RADIUS) {
+    return preferredId;
   }
 
   return nearestId;
@@ -113,6 +128,7 @@ function ProcessPickerCursorHint({
   originX,
   originY,
   scaleFactor,
+  theme,
 }: {
   cursorX: number;
   cursorY: number;
@@ -120,6 +136,7 @@ function ProcessPickerCursorHint({
   originX: number;
   originY: number;
   scaleFactor: number;
+  theme: ClickPositionOverlayState["theme"];
 }) {
   const normalizedLabel = label?.trim();
   if (!normalizedLabel) {
@@ -138,8 +155,16 @@ function ProcessPickerCursorHint({
         transform: `translate(${CURSOR_PICKER_OFFSET_X}px, ${CURSOR_PICKER_OFFSET_Y}px)`,
       }}
     >
-      <div className="max-w-[24rem] rounded-lg border border-white/10 bg-zinc-950/95 px-3 py-2 text-zinc-50 shadow-[0_18px_45px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.04)] backdrop-blur-sm">
-        <span className="block max-w-[20rem] truncate text-[12px] font-medium leading-none text-zinc-50">
+      <div
+        className="max-w-[24rem] rounded-lg border px-3 py-2 backdrop-blur-sm"
+        style={{
+          backgroundColor: withAlpha(theme.processPickerBackground, 0.95),
+          borderColor: withAlpha(theme.processPickerBorder, 0.82),
+          boxShadow: `0 18px 45px ${withAlpha(theme.processPickerBackground, 0.5)}, 0 0 0 1px ${withAlpha(theme.processPickerBorder, 0.08)}`,
+          color: theme.processPickerText,
+        }}
+      >
+        <span className="block max-w-[20rem] truncate text-[12px] font-medium leading-none">
           {normalizedLabel}
         </span>
       </div>
@@ -339,7 +364,12 @@ export function UniversalOverlayApp() {
         const nextHoveredId =
           draggingId !== null
             ? draggingId
-            : findNearbyDotId(cursor.x, cursor.y, overlayState.positions);
+            : findNearbyDotId(
+                cursor.x,
+                cursor.y,
+                overlayState.positions,
+                hoveredDotId,
+              );
 
         setHoveredDotId((current) =>
           current === nextHoveredId ? current : nextHoveredId,
@@ -367,6 +397,7 @@ export function UniversalOverlayApp() {
     };
   }, [
     draggingId,
+    hoveredDotId,
     overlayState.positions,
     overlayState.visible,
     processPickerActive,
@@ -409,6 +440,7 @@ export function UniversalOverlayApp() {
 
       const { x, y } = updateDraggedPosition(event.clientX, event.clientY);
       setDraggingId(null);
+      setHoveredDotId(dragId);
       void emitTo("main", CLICK_POSITION_OVERLAY_MOVE_EVENT, {
         id: dragId,
         x,
@@ -435,7 +467,6 @@ export function UniversalOverlayApp() {
   ) {
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
     setDraggingId(id);
     setHoveredDotId(id);
   }
@@ -447,12 +478,14 @@ export function UniversalOverlayApp() {
         originX={overlayState.originX}
         originY={overlayState.originY}
         scaleFactor={scaleFactor}
+        theme={overlayState.theme}
       />
       <UniversalEdgeStopTouchBloom
         feedback={edgeStopTouchFeedback}
         originX={overlayState.originX}
         originY={overlayState.originY}
         scaleFactor={scaleFactor}
+        theme={overlayState.theme}
       />
       {overlayState.positions.map((position, index) => (
         <ClickPositionDot
@@ -476,6 +509,7 @@ export function UniversalOverlayApp() {
           originX={overlayState.originX}
           originY={overlayState.originY}
           scaleFactor={scaleFactor}
+          theme={overlayState.theme}
         />
       ) : null}
     </div>

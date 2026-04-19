@@ -1,15 +1,19 @@
 import type { EdgeStopFeedback } from "@/config/runtime";
+import type { OverlayVisualTheme } from "@/config/theme";
+import { withAlpha } from "@/lib/color";
 
 export function UniversalEdgeStopTouchBloom({
   feedback,
   originX,
   originY,
   scaleFactor,
+  theme,
 }: {
   feedback: EdgeStopFeedback | null;
   originX: number;
   originY: number;
   scaleFactor: number;
+  theme: OverlayVisualTheme;
 }) {
   if (!feedback) {
     return null;
@@ -27,9 +31,25 @@ export function UniversalEdgeStopTouchBloom({
       }}
     >
       <div className="relative h-0 w-0" key={feedback.id}>
-        <div className="edge-stop-touch-bloom-halo absolute left-1/2 top-1/2 h-28 w-28 rounded-full bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.5)_0%,rgba(255,255,255,0.24)_24%,rgba(255,255,255,0.08)_48%,rgba(255,255,255,0)_74%)] blur-[4px]" />
-        <div className="edge-stop-touch-bloom-core absolute left-1/2 top-1/2 h-10 w-10 rounded-full bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.96)_0%,rgba(255,255,255,0.54)_32%,rgba(255,255,255,0.16)_62%,rgba(255,255,255,0)_100%)]" />
-        <div className="edge-stop-touch-bloom-ring absolute left-1/2 top-1/2 h-14 w-14 rounded-full border border-white/70 shadow-[0_0_24px_rgba(255,255,255,0.22)]" />
+        <div
+          className="edge-stop-touch-bloom-halo absolute left-1/2 top-1/2 h-28 w-28 rounded-full blur-[4px]"
+          style={{
+            background: `radial-gradient(circle at center, ${withAlpha(theme.edgeStopFill, 0.52)} 0%, ${withAlpha(theme.edgeStopFill, 0.24)} 24%, ${withAlpha(theme.edgeStopFill, 0.08)} 48%, ${withAlpha(theme.edgeStopFill, 0)} 74%)`,
+          }}
+        />
+        <div
+          className="edge-stop-touch-bloom-core absolute left-1/2 top-1/2 h-10 w-10 rounded-full"
+          style={{
+            background: `radial-gradient(circle at center, ${withAlpha(theme.edgeStopLine, 0.96)} 0%, ${withAlpha(theme.edgeStopLine, 0.54)} 32%, ${withAlpha(theme.edgeStopLine, 0.16)} 62%, ${withAlpha(theme.edgeStopLine, 0)} 100%)`,
+          }}
+        />
+        <div
+          className="edge-stop-touch-bloom-ring absolute left-1/2 top-1/2 h-14 w-14 rounded-full border"
+          style={{
+            borderColor: withAlpha(theme.edgeStopLine, 0.7),
+            boxShadow: `0 0 24px ${withAlpha(theme.edgeStopLine, 0.22)}`,
+          }}
+        />
       </div>
     </div>
   );

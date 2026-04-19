@@ -1,4 +1,22 @@
 import { normalizeHotkey, UNBOUND_HOTKEY, type Hotkey } from "@/input/hotkeys";
+import {
+  DEFAULT_WINDOW_OPACITY_PERCENT,
+  normalizeWindowOpacityPercent,
+} from "@/config/window-opacity";
+import {
+  areThemeColorsEqual,
+  cloneThemeColors,
+  defaultThemeColors,
+  defaultThemePresetId,
+  deriveThemeModeFromColors,
+  normalizeThemeColors,
+  resolveThemePresetId,
+  themePresetsById,
+  type AppThemeMode,
+  type SavedThemeColors,
+  type ThemeColors,
+  type ThemePresetId,
+} from "@/config/theme";
 
 export type ClickRateMode = "per" | "every";
 export type ClickRateUnit = "ms" | "s" | "m" | "h" | "d";
@@ -12,7 +30,7 @@ export type MouseButtonOption =
 export type MouseActionOption = "click" | "hold";
 export type JitterMode = "random" | "fixed";
 export type ClickEngine = "classic" | "throughput";
-export type AppTheme = "dark" | "light";
+export type AppTheme = AppThemeMode;
 export type EdgeStopSide = "top" | "right" | "bottom" | "left";
 export type ClickPosition = {
   id: number;
@@ -22,6 +40,10 @@ export type ClickPosition = {
 
 export type AutoClickerSettings = {
   theme: AppTheme;
+  themePreset: ThemePresetId;
+  themeCustomColorsEnabled: boolean;
+  themeColors: ThemeColors;
+  windowOpacity: number;
   closeToTray: boolean;
   processWhitelistEnabled: boolean;
   processWhitelist: string[];
@@ -73,6 +95,10 @@ export type SavedClickPosition = {
 
 export type SavedAutoClickerSettings = {
   theme?: string | null;
+  themePreset?: string | null;
+  themeCustomColorsEnabled?: boolean | null;
+  themeColors?: SavedThemeColors | null;
+  windowOpacity?: number | null;
   closeToTray?: boolean | null;
   processWhitelistEnabled?: boolean | null;
   processWhitelist?: string[] | null;
@@ -166,6 +192,10 @@ export const jitterModeLabels: Record<JitterMode, string> = {
 
 export const defaultAutoClickerSettings: AutoClickerSettings = {
   theme: "dark",
+  themePreset: defaultThemePresetId,
+  themeCustomColorsEnabled: false,
+  themeColors: cloneThemeColors(defaultThemeColors),
+  windowOpacity: DEFAULT_WINDOW_OPACITY_PERCENT,
   closeToTray: false,
   processWhitelistEnabled: true,
   processWhitelist: [],
@@ -359,6 +389,25 @@ export function normalizeAutoClickerSettings(
   settings: SavedAutoClickerSettings | null | undefined,
 ): AutoClickerSettings {
   const hotkey = settings?.hotkey;
+  const legacyThemePreset =
+    settings?.theme === "light" ? "frost" : defaultThemePresetId;
+  const themePreset = resolveThemePresetId(
+    settings?.themePreset ?? legacyThemePreset,
+  );
+  const presetThemeColors = cloneThemeColors(
+    themePresetsById[themePreset].colors,
+  );
+  const normalizedThemeColors = normalizeThemeColors(
+    settings?.themeColors,
+    themePreset,
+  );
+  const themeCustomColorsEnabled =
+    typeof settings?.themeCustomColorsEnabled === "boolean"
+      ? settings.themeCustomColorsEnabled
+      : !areThemeColorsEqual(normalizedThemeColors, presetThemeColors);
+  const themeColors = themeCustomColorsEnabled
+    ? normalizedThemeColors
+    : presetThemeColors;
   const clickRateMode = resolveOption(
     settings?.clickRateMode,
     clickRateModes,
@@ -398,11 +447,13 @@ export function normalizeAutoClickerSettings(
   const processBlacklist = normalizeProcessRuleList(settings?.processBlacklist);
 
   return {
-    theme: resolveOption(
-      settings?.theme,
-      appThemes,
-      defaultAutoClickerSettings.theme,
-    ),
+    theme: themeCustomColorsEnabled
+      ? deriveThemeModeFromColors(themeColors)
+      : themePresetsById[themePreset].mode,
+    themePreset,
+    themeCustomColorsEnabled,
+    themeColors,
+    windowOpacity: normalizeWindowOpacityPercent(settings?.windowOpacity),
     closeToTray:
       typeof settings?.closeToTray === "boolean"
         ? settings.closeToTray
