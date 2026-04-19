@@ -9,17 +9,23 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 
 import { type ClickPosition } from "@/config/settings";
 import {
+  CLICK_POSITION_OVERLAY_REGION_CANCEL_EVENT,
   CLICK_POSITION_OVERLAY_MOVE_EVENT,
+  CLICK_POSITION_OVERLAY_REGION_CONFIRM_EVENT,
   CLICK_POSITION_OVERLAY_UPDATE_EVENT,
+  type ClickPositionOverlayRegionCancelEvent,
   type ClickPositionOverlayMoveEvent,
+  type ClickPositionOverlayRegionConfirmEvent,
   type ClickPositionOverlayState,
   emptyClickPositionOverlayState,
   getClickPositionOverlayState,
   getCurrentCursorPosition,
   setClickPositionOverlayInteractive,
 } from "@/lib/click-position-overlay";
+import { isClickRegionValid } from "@/lib/click-region";
 import { withAlpha } from "@/lib/color";
 import { isTauri } from "@/lib/tauri";
+import { ClickRegionOverlay } from "@/overlay/click-region-overlay";
 import { UniversalEdgeStopOverlay } from "@/overlay/edge-stop-overlay";
 import { UniversalEdgeStopTouchBloom } from "@/overlay/edge-stop-touch-bloom";
 import { useEdgeStopTouchFeedback } from "@/overlay/use-edge-stop-touch-feedback";
@@ -291,6 +297,42 @@ export function UniversalOverlayApp() {
   }, [processPickerActive]);
 
   useEffect(() => {
+    if (!overlayState.editable) {
+      return;
+    }
+
+    setDraggingId(null);
+    setHoveredDotId(null);
+  }, [overlayState.editable]);
+
+  useEffect(() => {
+    if (!isTauri() || !overlayState.editable || processPickerActive) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      void emitTo("main", CLICK_POSITION_OVERLAY_REGION_CANCEL_EVENT, {
+        cancelled: true,
+      } satisfies ClickPositionOverlayRegionCancelEvent).catch((error) => {
+        console.error("Unable to emit click region cancellation", error);
+      });
+    }
+
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [overlayState.editable, processPickerActive]);
+
+  useEffect(() => {
     if (!isTauri()) {
       return undefined;
     }
@@ -298,6 +340,7 @@ export function UniversalOverlayApp() {
     const shouldBeInteractive =
       overlayState.visible &&
       !processPickerActive &&
+      !overlayState.editable &&
       overlayState.positions.length > 0 &&
       (draggingId !== null || hoveredDotId !== null);
     if (isInteractiveRef.current === shouldBeInteractive) {
@@ -319,6 +362,7 @@ export function UniversalOverlayApp() {
   }, [
     draggingId,
     hoveredDotId,
+    overlayState.editable,
     overlayState.positions.length,
     overlayState.visible,
     processPickerActive,
@@ -344,6 +388,7 @@ export function UniversalOverlayApp() {
     if (
       !isTauri() ||
       !overlayState.visible ||
+      overlayState.editable ||
       processPickerActive ||
       overlayState.positions.length === 0
     ) {
@@ -398,6 +443,7 @@ export function UniversalOverlayApp() {
   }, [
     draggingId,
     hoveredDotId,
+    overlayState.editable,
     overlayState.positions,
     overlayState.visible,
     processPickerActive,
@@ -465,6 +511,10 @@ export function UniversalOverlayApp() {
     event: ReactPointerEvent<HTMLDivElement>,
     id: number,
   ) {
+    if (overlayState.editable) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
     setDraggingId(id);
@@ -473,6 +523,33 @@ export function UniversalOverlayApp() {
 
   return (
     <div className="pointer-events-none fixed inset-0 overflow-hidden bg-transparent">
+      <ClickRegionOverlay
+        bounds={{
+          height: overlayState.height,
+          width: overlayState.width,
+          x: overlayState.originX,
+          y: overlayState.originY,
+        }}
+        editable={overlayState.editable && !processPickerActive}
+        onConfirm={() => {
+          void emitTo("main", CLICK_POSITION_OVERLAY_REGION_CONFIRM_EVENT, {
+            region: isClickRegionValid(overlayState.clickRegion)
+              ? overlayState.clickRegion
+              : null,
+          } satisfies ClickPositionOverlayRegionConfirmEvent).catch((error) => {
+            console.error("Unable to emit click region confirmation", error);
+          });
+        }}
+        onRegionChange={(nextRegion) => {
+          setOverlayState((current) => ({
+            ...current,
+            clickRegion: nextRegion,
+          }));
+        }}
+        region={overlayState.clickRegion}
+        scaleFactor={scaleFactor}
+        theme={overlayState.theme}
+      />
       <UniversalEdgeStopOverlay
         edgeStop={overlayState.edgeStop}
         originX={overlayState.originX}

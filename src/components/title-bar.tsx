@@ -63,8 +63,10 @@ function MacControlButton({
 
 export function TitleBar({
   closeToTrayEnabled = false,
+  windowOpacity,
 }: {
   closeToTrayEnabled?: boolean;
+  windowOpacity: number;
 }) {
   const titleText = "Crystalline Auto Clicker";
   const [visibleTitle, setVisibleTitle] = useState("");
@@ -142,7 +144,7 @@ export function TitleBar({
         </div>
 
         <div className="flex items-center gap-1.5" data-window-control>
-          <AlwaysOnTopButton />
+          <AlwaysOnTopButton windowOpacity={windowOpacity} />
           <MacControlButton
             action="minimize"
             closeToTrayEnabled={closeToTrayEnabled}

@@ -1,4 +1,4 @@
-import type { ClickPosition } from "@/config/settings";
+import type { ClickPosition, ClickRegion } from "@/config/settings";
 import {
   defaultOverlayVisualTheme,
   type OverlayVisualTheme,
@@ -9,6 +9,10 @@ export const CLICK_POSITION_OVERLAY_UPDATE_EVENT =
   "click-position-overlay:update";
 export const CLICK_POSITION_OVERLAY_MOVE_EVENT =
   "click-position-overlay:move-dot";
+export const CLICK_POSITION_OVERLAY_REGION_CONFIRM_EVENT =
+  "click-position-overlay:confirm-region";
+export const CLICK_POSITION_OVERLAY_REGION_CANCEL_EVENT =
+  "click-position-overlay:cancel-region";
 
 export type ScreenPoint = {
   x: number;
@@ -26,6 +30,13 @@ export type ClickPositionOverlayMoveEvent = {
   id: number;
   x: number;
   y: number;
+};
+
+export type ClickPositionOverlayRegionConfirmEvent = {
+  region: ClickRegion | null;
+};
+export type ClickPositionOverlayRegionCancelEvent = {
+  cancelled: true;
 };
 
 export type ProcessPickerOverlayState = {
@@ -49,6 +60,7 @@ export type EdgeStopOverlayState = {
 };
 
 export type ClickPositionOverlayState = {
+  clickRegion: ClickRegion | null;
   edgeStop: EdgeStopOverlayState;
   editable: boolean;
   height: number;
@@ -62,6 +74,7 @@ export type ClickPositionOverlayState = {
 };
 
 export type ClickPositionOverlayRequest = {
+  clickRegion: ClickRegion | null;
   edgeStop: EdgeStopOverlayConfig;
   editable: boolean;
   positions: ClickPosition[];
@@ -70,6 +83,7 @@ export type ClickPositionOverlayRequest = {
 };
 
 const EMPTY_OVERLAY_STATE: ClickPositionOverlayState = {
+  clickRegion: null,
   edgeStop: {
     enabled: false,
     zones: [],
@@ -131,6 +145,7 @@ export async function setClickPositionOverlayInteractive(interactive: boolean) {
 export function emptyClickPositionOverlayState() {
   return {
     ...EMPTY_OVERLAY_STATE,
+    clickRegion: EMPTY_OVERLAY_STATE.clickRegion,
     processPicker: { ...EMPTY_OVERLAY_STATE.processPicker },
     theme: { ...EMPTY_OVERLAY_STATE.theme },
   };

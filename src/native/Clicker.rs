@@ -44,7 +44,9 @@ use crate::process_filters::{
     foreground_process_id, is_process_allowed, normalize_process_name_list, process_name_by_id,
 };
 #[cfg(target_os = "windows")]
-use crate::edge_stop::{cursor_hits_edge_stop, edge_stop_runtime, EdgeStopRuntime, EdgeStopWidths};
+use crate::edge_stop::{
+    cursor_hits_edge_stop, edge_stop_runtime, EdgeStopRuntime, EdgeStopWidths, OverlayRect,
+};
 #[cfg(target_os = "windows")]
 use hotkeys::{format_hotkey_label, normalize_hotkey_code, validate_hotkey_code};
 
@@ -155,6 +157,8 @@ pub struct AutoClickerCommandConfig {
     pub mouse_action: MouseAction,
     pub click_position_enabled: bool,
     pub click_positions: Vec<ClickPositionPoint>,
+    pub click_region_enabled: bool,
+    pub click_region: Option<OverlayRect>,
     pub jitter_enabled: bool,
     pub jitter_mode: JitterMode,
     pub jitter_x: String,
@@ -206,6 +210,8 @@ impl Default for AutoClickerCommandConfig {
             mouse_action: MouseAction::Click,
             click_position_enabled: false,
             click_positions: Vec::new(),
+            click_region_enabled: false,
+            click_region: None,
             jitter_enabled: false,
             jitter_mode: JitterMode::Random,
             jitter_x: DEFAULT_JITTER_AXIS.into(),
@@ -650,6 +656,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             }
 
             let active_edge_stop = edge_stop_widths.map(|_| &edge_stop_state);
+            let active_click_region = click_region_active_from_config(&config);
             let click_result = if can_dispatch_clicks {
                 match config.mouse_action {
                     MouseAction::Click => {
@@ -763,6 +770,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                                 click_duration_range,
                                                                 jitter_range,
                                                                 Some(position),
+                                                                active_click_region,
                                                                 active_edge_stop,
                                                                 &mut click_randomizer,
                                                             ) {
@@ -826,6 +834,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                         click_duration_range,
                                                         jitter_range,
                                                         jitter_anchor_for_dispatch,
+                                                        active_click_region,
                                                         active_edge_stop,
                                                         &mut click_randomizer,
                                                     ) {
@@ -1107,6 +1116,9 @@ fn normalize_auto_clicker_config(
     config.hotkey_label = format_hotkey_label(&config.hotkey_code)?;
     config.process_whitelist = normalize_process_name_list(&config.process_whitelist);
     config.process_blacklist = normalize_process_name_list(&config.process_blacklist);
+    config.click_region = config
+        .click_region
+        .filter(|region| region.width > 0 && region.height > 0);
     config
         .process_blacklist
         .retain(|rule| !config.process_whitelist.iter().any(|item| item == rule));
@@ -1196,6 +1208,17 @@ fn click_positions_active_from_config(config: &AutoClickerCommandConfig) -> bool
     config.click_position_enabled
         && matches!(config.mouse_action, MouseAction::Click)
         && !config.click_positions.is_empty()
+}
+
+#[cfg(target_os = "windows")]
+fn click_region_active_from_config(config: &AutoClickerCommandConfig) -> Option<OverlayRect> {
+    if !config.click_region_enabled || !matches!(config.mouse_action, MouseAction::Click) {
+        return None;
+    }
+
+    config
+        .click_region
+        .filter(|region| region.width > 0 && region.height > 0)
 }
 
 #[cfg(target_os = "windows")]

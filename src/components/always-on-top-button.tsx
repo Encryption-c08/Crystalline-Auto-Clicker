@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
 
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PinIcon, PinOffIcon } from "lucide-react";
 
+import {
+  isMainWindowAlwaysOnTop,
+  setMainWindowAlwaysOnTop,
+} from "@/lib/main-window";
 import { isTauri } from "@/lib/tauri";
 import { cn } from "@tauri-ui/lib/utils";
 
-export function AlwaysOnTopButton() {
+export function AlwaysOnTopButton({
+  windowOpacity,
+}: {
+  windowOpacity: number;
+}) {
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [hasLoadedState, setHasLoadedState] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -19,8 +26,7 @@ export function AlwaysOnTopButton() {
 
     let cancelled = false;
 
-    void getCurrentWindow()
-      .isAlwaysOnTop()
+    void isMainWindowAlwaysOnTop()
       .then((value) => {
         if (!cancelled) {
           setAlwaysOnTop(value);
@@ -49,7 +55,7 @@ export function AlwaysOnTopButton() {
     setIsUpdating(true);
 
     try {
-      await getCurrentWindow().setAlwaysOnTop(nextAlwaysOnTop);
+      await setMainWindowAlwaysOnTop(nextAlwaysOnTop, windowOpacity);
       setAlwaysOnTop(nextAlwaysOnTop);
     } catch (error) {
       console.error("Unable to update always-on-top state", error);

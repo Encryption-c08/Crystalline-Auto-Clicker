@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
@@ -16,6 +16,7 @@ import {
   mouseActions,
   clickRateUnitLabels,
   getClickRateUnitsForMode,
+  normalizeClickRateUnitForMode,
   mouseButtonLabels,
   mouseButtons,
   type AutoClickerSettings,
@@ -155,23 +156,23 @@ export function SettingsPanelContent({
     };
   }, [isClickPositionContentMounted, isClickPositionSectionExpanded]);
 
-  function clearHotkeyTriggerClickIgnore() {
+  const clearHotkeyTriggerClickIgnore = useCallback(() => {
     ignoreNextHotkeyTriggerClickRef.current = false;
 
     if (hotkeyTriggerIgnoreTimeoutRef.current !== null) {
       window.clearTimeout(hotkeyTriggerIgnoreTimeoutRef.current);
       hotkeyTriggerIgnoreTimeoutRef.current = null;
     }
-  }
+  }, []);
 
-  function armHotkeyTriggerClickIgnore() {
+  const armHotkeyTriggerClickIgnore = useCallback(() => {
     clearHotkeyTriggerClickIgnore();
     ignoreNextHotkeyTriggerClickRef.current = true;
     hotkeyTriggerIgnoreTimeoutRef.current = window.setTimeout(() => {
       ignoreNextHotkeyTriggerClickRef.current = false;
       hotkeyTriggerIgnoreTimeoutRef.current = null;
     }, 250);
-  }
+  }, [clearHotkeyTriggerClickIgnore]);
 
   function cycleMouseButton() {
     setSettings((current) => {
@@ -190,7 +191,11 @@ export function SettingsPanelContent({
     setIsRateUnitDropdownOpen(false);
     setSettings((current) => {
       const nextRateUnits = getClickRateUnitsForMode(current.clickRateMode);
-      const currentIndex = nextRateUnits.indexOf(current.clickRateUnit);
+      const currentUnit = normalizeClickRateUnitForMode(
+        current.clickRateMode,
+        current.clickRateUnit,
+      );
+      const currentIndex = nextRateUnits.indexOf(currentUnit);
       const nextIndex =
         currentIndex >= 0 ? (currentIndex + 1) % nextRateUnits.length : 0;
 
@@ -203,17 +208,14 @@ export function SettingsPanelContent({
 
   function setClickRateMode(nextMode: ClickRateMode) {
     setSettings((current) => {
-      const nextUnits = getClickRateUnitsForMode(nextMode);
-      const nextDefaultUnit = nextUnits[0] ?? "s";
+      const nextUnit = isCompact
+        ? normalizeClickRateUnitForMode(nextMode, null)
+        : normalizeClickRateUnitForMode(nextMode, current.clickRateUnit);
 
       return {
         ...current,
         clickRateMode: nextMode,
-        clickRateUnit: isCompact
-          ? nextDefaultUnit
-          : nextUnits.includes(current.clickRateUnit)
-            ? current.clickRateUnit
-            : nextDefaultUnit,
+        clickRateUnit: nextUnit,
       };
     });
   }

@@ -1,5 +1,6 @@
 import type {
   AutoClickerSettings,
+  ClickRegion,
   ClickPosition,
   ClickEngine,
   ClickMode,
@@ -64,6 +65,8 @@ export type AutoClickerCommandConfig = {
   mouseAction: MouseActionOption;
   clickPositionEnabled: boolean;
   clickPositions: ClickPosition[];
+  clickRegionEnabled: boolean;
+  clickRegion: ClickRegion | null;
   jitterEnabled: boolean;
   jitterMode: JitterMode;
   jitterX: string;
@@ -521,6 +524,8 @@ export function buildAutoClickerConfig(
     mouseAction: settings.mouseAction,
     clickPositionEnabled: settings.clickPositionEnabled,
     clickPositions: settings.clickPositions,
+    clickRegionEnabled: settings.clickRegionEnabled,
+    clickRegion: settings.clickRegion,
     jitterEnabled: settings.jitterEnabled,
     jitterMode: settings.jitterMode,
     jitterX,

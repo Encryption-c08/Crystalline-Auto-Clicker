@@ -11,7 +11,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 
-use crate::edge_stop::{cursor_hits_edge_stop, EdgeStopRuntime};
+use crate::edge_stop::{cursor_hits_edge_stop, EdgeStopRuntime, OverlayRect};
 
 use super::{
     AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, JitterMode,
@@ -247,6 +247,7 @@ pub(crate) fn dispatch_mouse_clicks(
     click_duration_range: Option<ClickDurationRange>,
     cursor_jitter: Option<CursorJitterConfig>,
     base_position: Option<ClickPositionPoint>,
+    click_region: Option<OverlayRect>,
     edge_stop: Option<&EdgeStopRuntime>,
     randomizer: &mut ClickRandomizer,
 ) -> Result<DispatchMouseClicksOutcome, String> {
@@ -260,7 +261,7 @@ pub(crate) fn dispatch_mouse_clicks(
     for click_index in 0..count {
         let click_base_position = if let Some(base_position) = base_position {
             Some(base_position)
-        } else if cursor_jitter.is_some() {
+        } else if cursor_jitter.is_some() || click_region.is_some() {
             Some(current_cursor_position()?)
         } else {
             None
@@ -268,13 +269,32 @@ pub(crate) fn dispatch_mouse_clicks(
         let mut should_click_on_restore = false;
 
         if let Some(base_position) = click_base_position {
+            if let Some(click_region) = click_region {
+                if !click_region_contains_position(click_region, base_position) {
+                    return Ok(DispatchMouseClicksOutcome::Completed(
+                        dispatched_click_count,
+                    ));
+                }
+            }
+
             if edge_stop_matches_position(edge_stop, base_position) {
                 return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(base_position));
             }
 
-            let target_position = cursor_jitter
-                .map(|jitter| randomizer.next_jittered_position(base_position, jitter))
-                .unwrap_or(base_position);
+            let target_position = click_region
+                .map(|region| {
+                    clamp_position_to_region(
+                        cursor_jitter
+                            .map(|jitter| randomizer.next_jittered_position(base_position, jitter))
+                            .unwrap_or(base_position),
+                        region,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    cursor_jitter
+                        .map(|jitter| randomizer.next_jittered_position(base_position, jitter))
+                        .unwrap_or(base_position)
+                });
             if edge_stop_matches_position(edge_stop, target_position) {
                 return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(target_position));
             }
@@ -342,6 +362,36 @@ pub(crate) fn current_cursor_position() -> Result<ClickPositionPoint, String> {
 
 fn click_positions_match(left: ClickPositionPoint, right: ClickPositionPoint) -> bool {
     left.x == right.x && left.y == right.y
+}
+
+fn click_region_contains_position(region: OverlayRect, position: ClickPositionPoint) -> bool {
+    let right = region.x.saturating_add(region.width.max(0));
+    let bottom = region.y.saturating_add(region.height.max(0));
+
+    position.x >= region.x
+        && position.x < right
+        && position.y >= region.y
+        && position.y < bottom
+}
+
+fn clamp_position_to_region(
+    position: ClickPositionPoint,
+    region: OverlayRect,
+) -> ClickPositionPoint {
+    let max_x = region
+        .x
+        .saturating_add(region.width.max(1))
+        .saturating_sub(1);
+    let max_y = region
+        .y
+        .saturating_add(region.height.max(1))
+        .saturating_sub(1);
+
+    ClickPositionPoint {
+        id: position.id,
+        x: position.x.clamp(region.x, max_x),
+        y: position.y.clamp(region.y, max_y),
+    }
 }
 
 fn edge_stop_matches_position(

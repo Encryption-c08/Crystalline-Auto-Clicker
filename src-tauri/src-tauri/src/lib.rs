@@ -109,15 +109,24 @@ struct PersistedClickPosition {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PersistedClickRegion {
+    x: Option<i32>,
+    y: Option<i32>,
+    width: Option<i32>,
+    height: Option<i32>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedThemeColors {
-    accent: Option<String>,
     background: Option<String>,
-    edge_stop_fill: Option<String>,
-    edge_stop_line: Option<String>,
-    muted_text: Option<String>,
     panel: Option<String>,
     panel_border: Option<String>,
     text: Option<String>,
+    muted_text: Option<String>,
+    accent: Option<String>,
+    edge_stop_fill: Option<String>,
+    edge_stop_line: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -129,10 +138,6 @@ struct PersistedAutoClickerSettings {
     theme_colors: Option<PersistedThemeColors>,
     window_opacity: Option<f64>,
     close_to_tray: Option<bool>,
-    process_whitelist_enabled: Option<bool>,
-    process_whitelist: Option<Vec<String>>,
-    process_blacklist_enabled: Option<bool>,
-    process_blacklist: Option<Vec<String>>,
     click_mode: Option<String>,
     click_rate: Option<String>,
     click_rate_mode: Option<String>,
@@ -144,16 +149,18 @@ struct PersistedAutoClickerSettings {
     click_position_dots_visible: Option<bool>,
     click_position_hotkey: Option<PersistedHotkey>,
     click_positions: Option<Vec<PersistedClickPosition>>,
-    jitter_enabled: Option<bool>,
-    jitter_mode: Option<String>,
-    jitter_x: Option<String>,
-    jitter_y: Option<String>,
+    click_region_enabled: Option<bool>,
+    click_region: Option<PersistedClickRegion>,
     double_click_enabled: Option<bool>,
     double_click_delay: Option<String>,
     click_duration_enabled: Option<bool>,
     click_duration_min: Option<String>,
     click_duration_max: Option<String>,
     click_duration: Option<String>,
+    jitter_enabled: Option<bool>,
+    jitter_mode: Option<String>,
+    jitter_x: Option<String>,
+    jitter_y: Option<String>,
     click_limit_enabled: Option<bool>,
     click_limit: Option<String>,
     time_limit_enabled: Option<bool>,
@@ -164,6 +171,10 @@ struct PersistedAutoClickerSettings {
     edge_stop_right_width: Option<String>,
     edge_stop_bottom_width: Option<String>,
     edge_stop_left_width: Option<String>,
+    process_whitelist_enabled: Option<bool>,
+    process_whitelist: Option<Vec<String>>,
+    process_blacklist_enabled: Option<bool>,
+    process_blacklist: Option<Vec<String>>,
 }
 
 fn normalize_window_opacity_percent(opacity: Option<f64>) -> f64 {
@@ -197,6 +208,13 @@ struct WindowFrameRequest {
     min_height: Option<f64>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MainWindowAlwaysOnTopRequest {
+    always_on_top: bool,
+    opacity: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HotkeyCaptureResponse {
@@ -216,6 +234,7 @@ struct ClickPositionPointDto {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayRequest {
+    click_region: Option<OverlayRect>,
     edge_stop: EdgeStopOverlayRequest,
     editable: bool,
     positions: Vec<ClickPositionPointDto>,
@@ -274,6 +293,7 @@ impl Default for OverlayVisualTheme {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayState {
+    click_region: Option<OverlayRect>,
     edge_stop: EdgeStopOverlayState,
     editable: bool,
     height: i32,
@@ -631,6 +651,9 @@ fn configure_click_position_overlay_window(
 ) -> Result<(), String> {
     sync_click_position_overlay_window_bounds(window)?;
     window
+        .set_resizable(false)
+        .map_err(|error| format!("Unable to disable click position overlay resizing: {error}"))?;
+    window
         .set_focusable(false)
         .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))?;
 
@@ -656,6 +679,7 @@ fn click_position_overlay_state(
     let (origin_x, origin_y, width, height) = (0, 0, 0, 0);
 
     ClickPositionOverlayState {
+        click_region: overlay.click_region,
         edge_stop: edge_stop_overlay_state(&overlay.edge_stop),
         editable: overlay.editable,
         height,
@@ -1185,6 +1209,25 @@ fn set_main_window_opacity(_app: tauri::AppHandle, _opacity: f64) -> Result<(), 
 }
 
 #[tauri::command]
+fn set_main_window_always_on_top(
+    app: tauri::AppHandle,
+    request: MainWindowAlwaysOnTopRequest,
+) -> Result<(), String> {
+    let window = main_window(&app)?;
+    window
+        .set_always_on_top(request.always_on_top)
+        .map_err(|error| format!("Unable to update always-on-top state: {error}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows can drop layered alpha when the topmost state changes.
+        set_main_window_opacity_inner(&window, request.opacity)?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn hide_main_window_to_tray(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -1366,6 +1409,7 @@ pub fn run() {
             read_global_hotkey_state,
             sync_main_window_frame,
             set_main_window_opacity,
+            set_main_window_always_on_top,
             hide_main_window_to_tray
         ])
         .on_window_event(|window, event| {

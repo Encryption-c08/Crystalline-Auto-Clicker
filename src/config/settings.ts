@@ -38,6 +38,13 @@ export type ClickPosition = {
   y: number;
 };
 
+export type ClickRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type AutoClickerSettings = {
   theme: AppTheme;
   themePreset: ThemePresetId;
@@ -60,6 +67,8 @@ export type AutoClickerSettings = {
   clickPositionDotsVisible: boolean;
   clickPositionHotkey: Hotkey;
   clickPositions: ClickPosition[];
+  clickRegionEnabled: boolean;
+  clickRegion: ClickRegion | null;
   jitterEnabled: boolean;
   jitterMode: JitterMode;
   jitterX: string;
@@ -93,6 +102,13 @@ export type SavedClickPosition = {
   y?: number | null;
 };
 
+export type SavedClickRegion = {
+  x?: number | null;
+  y?: number | null;
+  width?: number | null;
+  height?: number | null;
+};
+
 export type SavedAutoClickerSettings = {
   theme?: string | null;
   themePreset?: string | null;
@@ -115,6 +131,8 @@ export type SavedAutoClickerSettings = {
   clickPositionDotsVisible?: boolean | null;
   clickPositionHotkey?: SavedHotkey | null;
   clickPositions?: SavedClickPosition[] | null;
+  clickRegionEnabled?: boolean | null;
+  clickRegion?: SavedClickRegion | null;
   jitterEnabled?: boolean | null;
   jitterMode?: string | null;
   jitterX?: string | null;
@@ -168,11 +186,11 @@ export const edgeStopSideLabels: Record<EdgeStopSide, string> = {
   left: "Left",
 };
 export const clickRateUnitLabels: Record<ClickRateUnit, string> = {
-  ms: "Milliseconds",
-  s: "Seconds",
-  m: "Minutes",
-  h: "Hours",
-  d: "Days",
+  ms: "Millisecond",
+  s: "Second",
+  m: "Minute",
+  h: "Hour",
+  d: "Day",
 };
 export const mouseButtonLabels: Record<MouseButtonOption, string> = {
   left: "Left",
@@ -212,6 +230,8 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   clickPositionDotsVisible: true,
   clickPositionHotkey: { ...UNBOUND_HOTKEY },
   clickPositions: [],
+  clickRegionEnabled: false,
+  clickRegion: null,
   jitterEnabled: false,
   jitterMode: "random",
   jitterX: "0",
@@ -296,6 +316,34 @@ function normalizeClickPositions(
   }
 
   return normalizedPositions;
+}
+
+function normalizeClickRegion(
+  region: SavedClickRegion | null | undefined,
+): ClickRegion | null {
+  const x = Number.isFinite(region?.x) ? Math.round(region!.x as number) : null;
+  const y = Number.isFinite(region?.y) ? Math.round(region!.y as number) : null;
+  const width = Number.isFinite(region?.width)
+    ? Math.round(region!.width as number)
+    : null;
+  const height = Number.isFinite(region?.height)
+    ? Math.round(region!.height as number)
+    : null;
+
+  if (x === null || y === null || width === null || height === null) {
+    return null;
+  }
+
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return {
+    x,
+    y,
+    width,
+    height,
+  };
 }
 
 export function normalizeProcessRuleName(value: string | null | undefined) {
@@ -385,6 +433,22 @@ export function getClickRateUnitsForMode(mode: ClickRateMode) {
   return mode === "every" ? clickRateEveryUnits : clickRatePerUnits;
 }
 
+export function normalizeClickRateUnitForMode(
+  mode: ClickRateMode,
+  value: string | null | undefined,
+): ClickRateUnit {
+  const units = getClickRateUnitsForMode(mode);
+  const fallback = units[0] ?? "s";
+
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  return (units as readonly string[]).includes(value)
+    ? (value as ClickRateUnit)
+    : fallback;
+}
+
 export function normalizeAutoClickerSettings(
   settings: SavedAutoClickerSettings | null | undefined,
 ): AutoClickerSettings {
@@ -435,6 +499,7 @@ export function normalizeAutoClickerSettings(
   const normalizedClickPositions = normalizeClickPositions(
     settings?.clickPositions,
   );
+  const normalizedClickRegion = normalizeClickRegion(settings?.clickRegion);
   const processWhitelistEnabled =
     typeof settings?.processWhitelistEnabled === "boolean"
       ? settings.processWhitelistEnabled
@@ -472,10 +537,9 @@ export function normalizeAutoClickerSettings(
         ? settings.clickRate
         : defaultAutoClickerSettings.clickRate,
     clickRateMode,
-    clickRateUnit: resolveOption(
+    clickRateUnit: normalizeClickRateUnitForMode(
+      clickRateMode,
       settings?.clickRateUnit,
-      getClickRateUnitsForMode(clickRateMode),
-      defaultAutoClickerSettings.clickRateUnit,
     ),
     hotkey: normalizeHotkey(
       hotkey
@@ -523,6 +587,11 @@ export function normalizeAutoClickerSettings(
         : defaultAutoClickerSettings.clickPositionHotkey,
     ),
     clickPositions: normalizedClickPositions,
+    clickRegionEnabled:
+      typeof settings?.clickRegionEnabled === "boolean"
+        ? settings.clickRegionEnabled
+        : defaultAutoClickerSettings.clickRegionEnabled,
+    clickRegion: normalizedClickRegion,
     jitterEnabled:
       typeof settings?.jitterEnabled === "boolean"
         ? settings.jitterEnabled

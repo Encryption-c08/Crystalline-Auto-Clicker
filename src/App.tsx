@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Settings2Icon } from "lucide-react";
 
 import { ClickDurationPanel } from "@/components/click-duration-panel";
+import { ClickRegionPanel } from "@/components/click-region-panel";
 import { CloseToTrayPanel } from "@/components/close-to-tray-panel";
 import type {
   DisabledDependencyCue,
@@ -39,11 +40,20 @@ import {
 import { configureAutoClicker } from "@/lib/auto-clicker";
 import {
   CLICK_POSITION_OVERLAY_MOVE_EVENT,
+  CLICK_POSITION_OVERLAY_REGION_CANCEL_EVENT,
+  CLICK_POSITION_OVERLAY_REGION_CONFIRM_EVENT,
   type ClickPositionOverlayMoveEvent,
+  type ClickPositionOverlayRegionCancelEvent,
+  type ClickPositionOverlayRegionConfirmEvent,
   getClickPositionOverlayState,
   getCurrentCursorPosition,
   syncClickPositionOverlay,
 } from "@/lib/click-position-overlay";
+import {
+  createDefaultClickRegion,
+  isClickRegionValid,
+  resolveOverlayBounds,
+} from "@/lib/click-region";
 import { readGlobalHotkeyState } from "@/lib/global-hotkey";
 import {
   getForegroundProcessName,
@@ -226,6 +236,7 @@ export default function App() {
   const [isMainWindowReady, setIsMainWindowReady] = useState(false);
   const [edgeStopThemePreviewActive, setEdgeStopThemePreviewActive] =
     useState(false);
+  const [isClickRegionEditing, setIsClickRegionEditing] = useState(false);
   const hasShownMainWindowRef = useRef(false);
   const simplePanelMeasureRef = useRef<HTMLDivElement | null>(null);
   const resolvedThemeStyles = useMemo(
@@ -314,6 +325,51 @@ export default function App() {
     }));
   }
 
+  async function resolveDefaultClickRegion() {
+    const overlayState = await getClickPositionOverlayState().catch(() => null);
+    return createDefaultClickRegion(resolveOverlayBounds(overlayState));
+  }
+
+  async function ensureClickRegionInitialized() {
+    const nextRegion = await resolveDefaultClickRegion();
+
+    setSettings((current) => {
+      if (isClickRegionValid(current.clickRegion)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        clickRegion: nextRegion,
+      };
+    });
+  }
+
+  async function enableClickRegion() {
+    await ensureClickRegionInitialized();
+    setSettings((current) => ({
+      ...current,
+      clickRegionEnabled: true,
+    }));
+  }
+
+  async function startClickRegionEditing() {
+    if (isClickRegionEditing) {
+      return;
+    }
+
+    await enableClickRegion();
+    setIsClickRegionEditing(true);
+  }
+
+  async function resetClickRegion() {
+    const nextRegion = await resolveDefaultClickRegion();
+    setSettings((current) => ({
+      ...current,
+      clickRegion: nextRegion,
+    }));
+  }
+
   useEffect(() => {
     if (theme !== settings.theme) {
       setTheme(settings.theme);
@@ -387,6 +443,88 @@ export default function App() {
       if (pollTimeoutId !== null) {
         window.clearTimeout(pollTimeoutId);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let dispose: (() => void) | undefined;
+
+    void listen<ClickPositionOverlayRegionConfirmEvent>(
+      CLICK_POSITION_OVERLAY_REGION_CONFIRM_EVENT,
+      (event) => {
+        if (cancelled) {
+          return;
+        }
+
+        const confirmedRegion = isClickRegionValid(event.payload.region)
+          ? event.payload.region
+          : null;
+
+        if (confirmedRegion) {
+          setSettings((current) => ({
+            ...current,
+            clickRegion:
+              current.clickRegion &&
+              current.clickRegion.x === confirmedRegion.x &&
+              current.clickRegion.y === confirmedRegion.y &&
+              current.clickRegion.width === confirmedRegion.width &&
+              current.clickRegion.height === confirmedRegion.height
+                ? current.clickRegion
+                : confirmedRegion,
+          }));
+        }
+
+        setIsClickRegionEditing(false);
+      },
+    ).then((unlisten) => {
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+
+      dispose = unlisten;
+    });
+
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let dispose: (() => void) | undefined;
+
+    void listen<ClickPositionOverlayRegionCancelEvent>(
+      CLICK_POSITION_OVERLAY_REGION_CANCEL_EVENT,
+      () => {
+        if (cancelled) {
+          return;
+        }
+
+        setIsClickRegionEditing(false);
+      },
+    ).then((unlisten) => {
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+
+      dispose = unlisten;
+    });
+
+    return () => {
+      cancelled = true;
+      dispose?.();
     };
   }, []);
 
@@ -488,6 +626,34 @@ export default function App() {
   }, [hasLoadedSettings, settings]);
 
   useEffect(() => {
+    if (settings.mouseAction !== "click" || !settings.clickRegionEnabled) {
+      setIsClickRegionEditing(false);
+    }
+  }, [settings.clickRegionEnabled, settings.mouseAction]);
+
+  useEffect(() => {
+    if (!isClickRegionEditing) {
+      return undefined;
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setIsClickRegionEditing(false);
+    }
+
+    window.addEventListener("keydown", handleEscape, true);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscape, true);
+    };
+  }, [isClickRegionEditing]);
+
+  useEffect(() => {
     if (!hasLoadedSettings || !isMainWindowReady) {
       return;
     }
@@ -516,36 +682,41 @@ export default function App() {
       settings.clickPositionDotsVisible &&
       settings.clickPositions.length > 0 &&
       processRulesAllowFocusedProcess;
+    const clickRegionOverlayVisible =
+      settings.mouseAction === "click" &&
+      settings.clickRegionEnabled &&
+      isClickRegionValid(settings.clickRegion) &&
+      processRulesAllowFocusedProcess;
+    const clickRegionEditable =
+      isClickRegionEditing &&
+      settings.mouseAction === "click" &&
+      processRulesAllowFocusedProcess;
 
     void syncClickPositionOverlay({
+      clickRegion:
+        clickRegionOverlayVisible || clickRegionEditable
+          ? settings.clickRegion
+          : null,
       edgeStop: overlayEdgeStop,
-      editable: false,
+      editable: clickRegionEditable,
       positions: settings.clickPositions,
       theme: overlayVisualTheme,
       visible:
         clickPositionOverlayVisible ||
+        clickRegionOverlayVisible ||
+        clickRegionEditable ||
         hasActiveEdgeStopConfig(edgeStop) ||
         edgeStopThemePreviewActive,
     }).catch((error) => {
       console.error("Unable to sync click position overlay", error);
     });
   }, [
+    isClickRegionEditing,
     edgeStopThemePreviewActive,
     overlayVisualTheme,
-    settings.edgeStopBottomWidth,
-    settings.edgeStopEnabled,
-    settings.edgeStopLeftWidth,
-    settings.edgeStopRightWidth,
-    settings.edgeStopTopWidth,
-    settings.themeColors,
     focusedProcessName,
     hasLoadedSettings,
-    settings.processBlacklistEnabled,
-    settings.processBlacklist,
-    settings.clickPositionDotsVisible,
-    settings.clickPositions,
-    settings.processWhitelistEnabled,
-    settings.processWhitelist,
+    settings,
   ]);
 
   useEffect(() => {
@@ -859,6 +1030,15 @@ export default function App() {
         settings={settings}
       />
       <EdgeStopPanel setSettings={setSettings} settings={settings} />
+      <ClickRegionPanel
+        isEditing={isClickRegionEditing}
+        onEditStart={() => void startClickRegionEditing()}
+        onEnable={() => void enableClickRegion()}
+        onReset={() => void resetClickRegion()}
+        onUnavailablePress={highlightDisabledDependency}
+        setSettings={setSettings}
+        settings={settings}
+      />
     </div>
   );
 
@@ -887,7 +1067,10 @@ export default function App() {
 
   return (
     <div className="h-screen overflow-hidden bg-background">
-      <TitleBar closeToTrayEnabled={settings.closeToTray} />
+      <TitleBar
+        closeToTrayEnabled={settings.closeToTray}
+        windowOpacity={settings.windowOpacity}
+      />
 
       <div className="flex h-full flex-col pt-11">
         <div className="min-h-0 flex-1 overflow-hidden">
