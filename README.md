@@ -6,42 +6,81 @@
 [![License](https://img.shields.io/github/license/Encryption-c08/Crystalline-Auto-Clicker?style=for-the-badge)](./LICENSE)
 [![Socials](https://img.shields.io/badge/Socials-Main%20Links-111111?style=for-the-badge)](https://fakecrime.bio/JohnFKennedy)
 
-Crystalline Auto Clicker is a desktop auto clicker built to feel fast, clean, and modern instead of looking like a throwaway utility. Right now the project is focused on a polished Windows experience with a custom Tauri desktop UI, flexible hotkey support, and reliable high-speed clicking.
+Crystalline Auto Clicker is a desktop auto clicker built to feel fast, polished, and modern instead of looking like a throwaway utility. The current release is focused on a strong Windows experience with a custom Tauri desktop UI, flexible hotkeys, advanced click behavior controls, and app-level safety features like edge stop and process filtering.
+
+## Preview
+
+<p align="center">
+  <img src="docs/images/advanced-preview.png" alt="Advanced mode preview" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/images/settings-preview.png" alt="Settings and theme preview" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/images/simple-preview.png" alt="Simple mode preview" width="64%" />
+</p>
+
+## Current Features
+
+- **Click Rate**  
+  Choose `Per` or `Every` timing so the clicker can run as `X clicks per unit` or `one click every X units`.
+- **Time Units**  
+  Use milliseconds, seconds, minutes, hours, and days where the selected rate mode supports them.
+- **Activation Mode**  
+  Pick `Toggle` to press once to start and again to stop, or `Hold` to keep the clicker active only while the bound key is held down.
+- **Mouse Action**  
+  Switch between normal repeated `Click` behavior or a `Hold` action that keeps the selected mouse button pressed.
+- **Hotkey Capture**  
+  Bind activation keys and click-position controls using keyboard keys, numpad keys, mouse buttons, or the mouse wheel.
+- **Mouse Buttons**  
+  Target left, middle, right, `Mouse 4`, or `Mouse 5`.
+- **App Layouts**  
+  Use a compact Simple layout, a full Advanced layout, or the separate Settings view.
+- **Click Positions**  
+  Save multiple click dots, show or hide their overlay, and place new dots with a dedicated hotkey at the current cursor position.
+- **Double Click**  
+  Send two clicks per cycle with an adjustable delay between the first and second click.
+- **Click Duration**  
+  Randomize how long each click is held before release with configurable minimum and maximum timing.
+- **Jitter**  
+  Move the cursor away from the original point before clicking with `Random` or `Fixed` X/Y pixel offsets.
+- **Stop Limits**  
+  Automatically turn the clicker off after a chosen number of clicks or after a chosen amount of time.
+- **Edge Stop**  
+  Use failsafe walls on each side of the screen layout that stop the auto clicker when the cursor touches them.
+- **Themes**  
+  Choose from presets, edit custom colors, preview edge stop overlay colors, and adjust window opacity.
+- **Process Filters**  
+  Use whitelist and blacklist rules with live process search, open-app shortcuts, and a click-to-pick tool that lets you click a window to grab its process name before adding it to either list.
+- **Window Controls**  
+  Enable always-on-top and close-to-tray behavior for the desktop window.
+- **Saved Settings**  
+  Keep your configuration between launches.
+
+## Download
+
+The latest Windows build is available on the [Releases](https://github.com/Encryption-c08/Crystalline-Auto-Clicker/releases) page.
+
+## Building From Source
+
+Visit [docs/BUILDING.md](./docs/BUILDING.md) for building instructions & a dedicated build command
 
 ## Why This Exists
 
-Crystalline Auto Clicker started after I came across [Blur Auto Clicker](https://github.com/Blur009/Blur-AutoClicker). I liked the idea and originally wanted to contribute to that project, but development was moving more slowly than I hoped and some of the features I saw as essential were not there yet. The biggest missing piece for me was macro support, along with the kind of deeper automation that would make the app more useful long term.
+Crystalline Auto Clicker started after I came across [Blur Auto Clicker](https://github.com/Blur009/Blur-AutoClicker). I liked the general direction and originally wanted to contribute there, but I wanted faster iteration and a broader feature set than what was available at the time.
 
-Instead of waiting around, I decided to build my own alternative with a similar feel but a more ambitious direction. The goal is to give people another serious option, push the feature set further, and prove an auto clicker does not have to be disposable, outdated, or stripped down to the bare minimum.
+Instead of waiting around, I decided to build my own alternative with a similar level of polish but a more ambitious long-term direction. The goal is to give people another serious option and prove an auto clicker does not have to be disposable, outdated, or stripped down to the bare minimum.
 
-I also do not plan for this project to become paid or closed source. I enjoy helping the communities around me, and I want Crystalline Auto Clicker to stay something people can use, learn from, and build on freely.
+I also do not plan for this project to become paid or closed source. I want Crystalline Auto Clicker to stay something people can use, learn from, and build on freely.
 
-## Current Status
+## Project Direction
 
-This project is currently available on `Windows`, and `Linux` is in development.
+Crystalline Auto Clicker is meant to grow into a broader desktop clicking and input automation tool, not just a bare-bones click repeater. Some of the bigger long-term goals are:
 
-The app already includes:
-
-- Configurable click rate with second, minute, hour, and day units
-- `Hold` and `Toggle` click modes
-- Keyboard, numpad, and mouse-button hotkeys
-- Left, middle, and right click support
-- A custom desktop UI instead of a basic system-looking utility window
-
-You can grab the latest Windows build from the [Releases](https://github.com/Encryption-c08/Crystalline-Auto-Clicker/releases) page.
-
-## What This Project Is Becoming
-
-Crystalline Auto Clicker is meant to grow into a full desktop clicking and input automation tool, not something bare bones like OP Auto Clicker. I want it to stay easy to use, but I also want it to feel polished, deliberate, and far more capable than the average auto clicker.
-
-The main things I want this project to include are:
-
-- A clean and consistent macro system that is more detailed, more capable, and easier to use than the macro tools usually bundled with keyboard software
-- An overlay that clearly shows what is enabled and how long clicking or a macro has been running
-- Profiles that automatically switch when the user launches a specific game or app
-- Extreme accuracy without sacrificing speed or responsiveness
-
-Later on, I also want to add import and export support for settings and macros so people can share full setups with each other, but that is a longer-term goal.
+- A cleaner and more capable macro system
+- Better runtime visibility through overlays and status feedback
+- Profiles that react to specific games or apps
+- Import and export support for full settings and macro setups
 
 ## Built With
 
@@ -49,7 +88,8 @@ Later on, I also want to add import and export support for settings and macros s
 - `React`
 - `TypeScript`
 - `Tailwind CSS`
+- `Rust`
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+This project is licensed under the [GNU General Public License v3.0](./LICENSE).
