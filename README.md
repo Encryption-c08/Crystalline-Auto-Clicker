@@ -52,6 +52,8 @@ Crystalline Auto Clicker is a desktop auto clicker built to feel fast, polished,
   Choose from presets, edit custom colors, preview edge stop overlay colors, and adjust window opacity.
 - **Process Filters**  
   Use whitelist and blacklist rules with live process search, open-app shortcuts, and a click-to-pick tool that lets you click a window to grab its process name before adding it to either list.
+- **Click Region**
+  Draws a box on your screen that restricts the auto clicker to only work in that selected area when enabled
 - **Window Controls**  
   Enable always-on-top and close-to-tray behavior for the desktop window.
 - **Saved Settings**  
