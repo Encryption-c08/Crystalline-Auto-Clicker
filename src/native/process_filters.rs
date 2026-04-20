@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 
-use serde::Serialize;
-
 #[cfg(target_os = "windows")]
 use base64::{prelude::BASE64_STANDARD, Engine};
 #[cfg(target_os = "windows")]
@@ -37,6 +35,13 @@ use windows_sys::Win32::{
     },
 };
 
+#[path = "../shared/process_filters.rs"]
+mod process_filters_shared;
+
+pub(crate) use process_filters_shared::OpenAppProcess;
+
+const WINDOWS_EXECUTABLE_SUFFIX: &str = ".exe";
+
 #[cfg(target_os = "windows")]
 const OPEN_APP_ICON_SIZE: i32 = 32;
 
@@ -47,52 +52,18 @@ struct HoveredOpenAppWindow {
     title: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OpenAppProcess {
-    pub icon_data_url: Option<String>,
-    pub name: String,
-}
-
 pub(crate) fn normalize_process_name(value: &str) -> Option<String> {
-    let trimmed_value = value.trim();
-    if trimmed_value.is_empty() {
-        return None;
-    }
-
-    let basename = trimmed_value
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(trimmed_value)
-        .trim()
-        .to_ascii_lowercase();
-
-    if basename.is_empty() {
-        return None;
-    }
-
-    if basename.contains('.') {
-        Some(basename)
-    } else {
-        Some(format!("{basename}.exe"))
-    }
+    process_filters_shared::normalize_process_name_with_suffix(
+        value,
+        Some(WINDOWS_EXECUTABLE_SUFFIX),
+    )
 }
 
 pub(crate) fn normalize_process_name_list(values: &[String]) -> Vec<String> {
-    let mut normalized_values = Vec::new();
-    let mut seen_values = HashSet::new();
-
-    for value in values {
-        let Some(normalized_value) = normalize_process_name(value) else {
-            continue;
-        };
-
-        if seen_values.insert(normalized_value.clone()) {
-            normalized_values.push(normalized_value);
-        }
-    }
-
-    normalized_values
+    process_filters_shared::normalize_process_name_list_with_suffix(
+        values,
+        Some(WINDOWS_EXECUTABLE_SUFFIX),
+    )
 }
 
 pub(crate) fn is_process_allowed(
@@ -100,19 +71,12 @@ pub(crate) fn is_process_allowed(
     whitelist: &[String],
     blacklist: &[String],
 ) -> bool {
-    let normalized_process_name = process_name.and_then(normalize_process_name);
-
-    if !whitelist.is_empty() {
-        return normalized_process_name
-            .as_deref()
-            .map(|name| whitelist.iter().any(|rule| rule == name))
-            .unwrap_or(false);
-    }
-
-    normalized_process_name
-        .as_deref()
-        .map(|name| !blacklist.iter().any(|rule| rule == name))
-        .unwrap_or(true)
+    process_filters_shared::is_process_allowed_with_suffix(
+        process_name,
+        whitelist,
+        blacklist,
+        Some(WINDOWS_EXECUTABLE_SUFFIX),
+    )
 }
 
 #[cfg(target_os = "windows")]
