@@ -1,5 +1,6 @@
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 
+import { compactInlineFieldClassName } from "@/components/compact-control-styles";
 import {
   finalizeEdgeStopWidth,
   normalizeEdgeStopWidthInput,
@@ -82,7 +83,7 @@ export function EdgeStopPanel({ settings, setSettings }: EdgeStopPanelProps) {
         return (
           <div
             className={cn(
-              "flex h-8 min-w-0 items-stretch overflow-hidden rounded-lg border transition-colors",
+              compactInlineFieldClassName,
               isEdgeStopActive
                 ? "border-border/70 bg-background/65"
                 : "border-border/60 bg-background/30 opacity-70",

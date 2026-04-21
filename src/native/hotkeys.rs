@@ -15,9 +15,9 @@ use windows_sys::Win32::{
     Foundation::{LPARAM, LRESULT, WPARAM},
     UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-        HC_ACTION, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_MOUSE_LL, WM_LBUTTONDOWN,
-        WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
-        WM_XBUTTONDOWN, WM_XBUTTONUP,
+        HC_ACTION, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP,
+        WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN,
+        WM_XBUTTONUP,
     },
 };
 
@@ -117,7 +117,9 @@ impl ParsedHotkey {
     }
 
     fn non_wheel_parts(&self) -> impl Iterator<Item = &HotkeyPart> {
-        self.parts.iter().filter(|part| matches!(part.kind, HotkeyPartKind::VirtualKey(_)))
+        self.parts
+            .iter()
+            .filter(|part| matches!(part.kind, HotkeyPartKind::VirtualKey(_)))
     }
 
     fn has_mouse_button_part(&self) -> bool {
@@ -199,12 +201,8 @@ pub(crate) fn read_hotkey_state(code: &str, click_mode: ClickMode) -> Result<boo
         ensure_mouse_wheel_hook();
 
         return Ok(match click_mode {
-            ClickMode::Hold => {
-                read_hold_wheel_hotkey_state(&parsed_hotkey, wheel_direction)
-            }
-            ClickMode::Toggle => {
-                read_toggle_wheel_hotkey_state(&parsed_hotkey, wheel_direction)
-            }
+            ClickMode::Hold => read_hold_wheel_hotkey_state(&parsed_hotkey, wheel_direction),
+            ClickMode::Toggle => read_toggle_wheel_hotkey_state(&parsed_hotkey, wheel_direction),
         });
     }
 
@@ -377,13 +375,13 @@ fn read_hold_wheel_hotkey_state(
 }
 
 fn non_wheel_parts_pressed(parsed_hotkey: &ParsedHotkey) -> bool {
-    parsed_hotkey
-        .non_wheel_parts()
-        .all(is_hotkey_part_pressed)
+    parsed_hotkey.non_wheel_parts().all(is_hotkey_part_pressed)
 }
 
 fn snapshot_matches_hotkey(snapshot: InputSnapshot, parsed_hotkey: &ParsedHotkey) -> bool {
-    parsed_hotkey.non_wheel_parts().all(|part| snapshot_matches_part(snapshot, part))
+    parsed_hotkey
+        .non_wheel_parts()
+        .all(|part| snapshot_matches_part(snapshot, part))
 }
 
 fn snapshot_matches_part(snapshot: InputSnapshot, part: &HotkeyPart) -> bool {
@@ -426,12 +424,8 @@ fn mouse_wheel_state() -> &'static Mutex<MouseWheelState> {
 fn ensure_mouse_wheel_hook() {
     INSTALL_MOUSE_WHEEL_HOOK.call_once(|| {
         thread::spawn(|| unsafe {
-            let hook = SetWindowsHookExW(
-                WH_MOUSE_LL,
-                Some(mouse_hook_proc),
-                std::ptr::null_mut(),
-                0,
-            );
+            let hook =
+                SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), std::ptr::null_mut(), 0);
 
             if hook.is_null() {
                 log::warn!("unable to install global mouse hook for wheel hotkeys");
@@ -449,11 +443,7 @@ fn ensure_mouse_wheel_hook() {
     });
 }
 
-unsafe extern "system" fn mouse_hook_proc(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let mouse_info = &*(lparam as *const MSLLHOOKSTRUCT);
         if (mouse_info.flags & LLMHF_INJECTED) == 0 {
@@ -602,7 +592,9 @@ fn mouse_button_snapshot_bit(code: &str) -> Option<u8> {
 }
 
 fn hotkey_code_parts(code: &str) -> impl Iterator<Item = &str> {
-    code.split('+').map(str::trim).filter(|part| !part.is_empty())
+    code.split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
 }
 
 fn hotkey_part_from_code(code: &str) -> Option<HotkeyPart> {
@@ -853,7 +845,12 @@ fn hotkey_part_from_code(code: &str) -> Option<HotkeyPart> {
     }
 }
 
-fn simple_hotkey_part(code: &str, label: &str, kind: HotkeyPartKind, is_modifier: bool) -> HotkeyPart {
+fn simple_hotkey_part(
+    code: &str,
+    label: &str,
+    kind: HotkeyPartKind,
+    is_modifier: bool,
+) -> HotkeyPart {
     HotkeyPart {
         code: code.to_string(),
         label: label.to_string(),

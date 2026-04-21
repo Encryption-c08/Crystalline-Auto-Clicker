@@ -3,6 +3,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
+import {
+  compactInlineFieldClassName,
+  compactSplitFieldClassName,
+} from "@/components/compact-control-styles";
 import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency";
 import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay";
 import type { AutoClickerSettings, ClickRateUnit } from "@/config/settings";
@@ -119,7 +123,7 @@ export function LimitsPanel({
   const clickLimitInputGroup = (
     <div
       className={cn(
-        "flex h-8 min-w-0 items-stretch overflow-hidden rounded-lg border transition-colors",
+        compactInlineFieldClassName,
         isClickLimitActive
           ? "border-border/70 bg-background/65"
           : "border-border/60 bg-background/30 opacity-70",
@@ -161,7 +165,7 @@ export function LimitsPanel({
   const timeLimitInputGroup = (
     <div
       className={cn(
-        "flex h-8 min-w-0 items-stretch overflow-visible transition-colors",
+        compactSplitFieldClassName,
         !isTimeLimitActive && "opacity-70",
       )}
     >

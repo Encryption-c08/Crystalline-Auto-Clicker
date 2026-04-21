@@ -44,7 +44,12 @@ pub struct EdgeStopRuntime {
 }
 
 pub fn cursor_hits_edge_stop(runtime: &EdgeStopRuntime, x: i32, y: i32) -> bool {
-    if runtime.zones.iter().copied().any(|zone| zone.contains(x, y)) {
+    if runtime
+        .zones
+        .iter()
+        .copied()
+        .any(|zone| zone.contains(x, y))
+    {
         return true;
     }
 

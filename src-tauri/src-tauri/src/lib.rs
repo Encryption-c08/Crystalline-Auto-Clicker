@@ -1,11 +1,14 @@
 use std::{fs, io::ErrorKind, path::PathBuf, sync::Mutex, thread, time::Duration};
 
+#[cfg(target_os = "linux")]
+use gtk::prelude::WidgetExt;
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    webview::PageLoadEvent, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Size,
-    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    webview::PageLoadEvent,
+    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Size, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
@@ -14,13 +17,13 @@ use tauri_plugin_opener::OpenerExt;
 use std::sync::atomic::{AtomicIsize, Ordering};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     Media::{timeBeginPeriod, timeEndPeriod, TIMERR_NOERROR},
     UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, GetCursorPos, GetSystemMetrics, GetWindowLongPtrW,
-        SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, GWLP_WNDPROC, LWA_ALPHA,
-        SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN, WM_SYSCOMMAND, WS_EX_LAYERED,
+        CallWindowProcW, DefWindowProcW, GetSystemMetrics, GetWindowLongPtrW,
+        SetLayeredWindowAttributes, SetWindowLongPtrW, GWLP_WNDPROC, GWL_EXSTYLE, LWA_ALPHA,
+        SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+        WM_SYSCOMMAND, WS_EX_LAYERED,
     },
 };
 
@@ -28,16 +31,26 @@ use windows_sys::Win32::{
 mod auto_clicker;
 #[path = "../../../src/native/edge_stop.rs"]
 mod edge_stop;
+#[cfg(target_os = "linux")]
+#[path = "../../../src/linux/input_monitor.rs"]
+mod linux_input_monitor;
+#[cfg(target_os = "linux")]
+#[path = "../../../src/linux/processes.rs"]
+mod linux_processes;
+#[cfg(target_os = "linux")]
+#[path = "../../../src/linux/x11.rs"]
+mod linux_x11;
 #[path = "../../../src/native/process_filters.rs"]
 mod process_filters;
 
 use auto_clicker::{AutoClickerCommandConfig, AutoClickerController, AutoClickerStatus};
 use edge_stop::{edge_stop_runtime, EdgeStopWidths, OverlayRect};
 use process_filters::{
+    current_cursor_position as resolve_current_cursor_position,
     foreground_process_name as resolve_foreground_process_name,
-    list_open_app_processes as resolve_open_app_processes, OpenAppProcess,
+    list_open_app_processes as resolve_open_app_processes,
     list_running_process_names as resolve_running_process_names,
-    pick_process_name_from_click as resolve_pick_process_name_from_click,
+    pick_process_name_from_click as resolve_pick_process_name_from_click, OpenAppProcess,
 };
 
 struct AppState {
@@ -185,7 +198,9 @@ fn normalize_window_opacity_percent(opacity: Option<f64>) -> f64 {
 }
 
 fn resolve_window_opacity_percent(settings: Option<&PersistedAutoClickerSettings>) -> f64 {
-    normalize_window_opacity_percent(settings.and_then(|saved_settings| saved_settings.window_opacity))
+    normalize_window_opacity_percent(
+        settings.and_then(|saved_settings| saved_settings.window_opacity),
+    )
 }
 
 fn load_saved_window_opacity_percent(app: &tauri::AppHandle) -> f64 {
@@ -392,6 +407,14 @@ fn is_click_position_overlay_interactive(state: &AppState) -> bool {
         .unwrap_or(false)
 }
 
+fn is_click_position_overlay_loaded(state: &AppState) -> bool {
+    state
+        .click_position_overlay_loaded
+        .lock()
+        .map(|loaded| *loaded)
+        .unwrap_or(false)
+}
+
 fn sync_main_tray_icon_visibility(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
     let hidden_to_tray = is_main_window_hidden_to_tray(state);
     let Some(tray_icon) = app.tray_by_id(MAIN_TRAY_ICON_ID) else {
@@ -479,7 +502,9 @@ fn setup_main_tray_icon(app: &tauri::AppHandle) -> Result<(), String> {
         .tooltip("Crystalline Auto Clicker")
         .on_menu_event(|app, event| match event.id() {
             id if id == MAIN_TRAY_OPEN_ID => {
-                if let Err(error) = restore_main_window_from_tray_inner(app, app.state::<AppState>().inner()) {
+                if let Err(error) =
+                    restore_main_window_from_tray_inner(app, app.state::<AppState>().inner())
+                {
                     log::error!("unable to restore main window from tray: {error}");
                 }
             }
@@ -562,13 +587,41 @@ fn apply_window_opacity(hwnd: HWND, opacity_percent: f64) -> Result<(), String> 
 }
 
 #[cfg(target_os = "windows")]
-fn set_main_window_opacity_inner(window: &WebviewWindow, opacity_percent: f64) -> Result<(), String> {
+fn set_main_window_opacity_inner(
+    window: &WebviewWindow,
+    opacity_percent: f64,
+) -> Result<(), String> {
     let normalized_opacity = normalize_window_opacity_percent(Some(opacity_percent));
     let hwnd = window
         .hwnd()
         .map_err(|error| format!("Unable to access main window handle: {error}"))?;
 
     apply_window_opacity(hwnd.0 as HWND, normalized_opacity)
+}
+
+#[cfg(target_os = "linux")]
+fn set_main_window_opacity_inner(
+    window: &WebviewWindow,
+    opacity_percent: f64,
+) -> Result<(), String> {
+    let normalized_opacity = normalize_window_opacity_percent(Some(opacity_percent)) / 100.0;
+    let window = window.clone();
+    let gtk_window_handle = window.clone();
+
+    window
+        .run_on_main_thread(move || match gtk_window_handle.gtk_window() {
+            Ok(gtk_window) => gtk_window.set_opacity(normalized_opacity),
+            Err(error) => log::warn!("unable to access main GTK window for opacity: {error}"),
+        })
+        .map_err(|error| format!("Unable to apply main window opacity: {error}"))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn set_main_window_opacity_inner(
+    _window: &WebviewWindow,
+    _opacity_percent: f64,
+) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -595,7 +648,89 @@ fn virtual_screen_bounds() -> VirtualScreenBounds {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DesktopBounds {
+    height: i32,
+    width: i32,
+    x: i32,
+    y: i32,
+}
+
 #[cfg(target_os = "windows")]
+fn overlay_desktop_bounds(_app: &tauri::AppHandle) -> Result<DesktopBounds, String> {
+    let bounds = virtual_screen_bounds();
+    Ok(DesktopBounds {
+        height: bounds.height,
+        width: bounds.width,
+        x: bounds.x,
+        y: bounds.y,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn overlay_desktop_bounds(app: &tauri::AppHandle) -> Result<DesktopBounds, String> {
+    let monitors = app
+        .available_monitors()
+        .map_err(|error| format!("Unable to enumerate display monitors: {error}"))?;
+
+    if monitors.is_empty() {
+        let (width, height) = linux_x11::display_size()?;
+        return Ok(DesktopBounds {
+            height,
+            width,
+            x: 0,
+            y: 0,
+        });
+    }
+
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+
+    for monitor in monitors {
+        let position = monitor.position();
+        let size = monitor.size();
+        let width = i32::try_from(size.width).unwrap_or(i32::MAX);
+        let height = i32::try_from(size.height).unwrap_or(i32::MAX);
+
+        min_x = min_x.min(position.x);
+        min_y = min_y.min(position.y);
+        max_x = max_x.max(position.x.saturating_add(width.max(0)));
+        max_y = max_y.max(position.y.saturating_add(height.max(0)));
+    }
+
+    Ok(DesktopBounds {
+        height: max_y.saturating_sub(min_y).max(1),
+        width: max_x.saturating_sub(min_x).max(1),
+        x: min_x,
+        y: min_y,
+    })
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn overlay_desktop_bounds(_app: &tauri::AppHandle) -> Result<DesktopBounds, String> {
+    Ok(DesktopBounds {
+        height: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+    })
+}
+
+fn apply_click_position_overlay_bounds(
+    app: &tauri::AppHandle,
+    overlay_state: &mut ClickPositionOverlayState,
+) -> Result<(), String> {
+    let bounds = overlay_desktop_bounds(app)?;
+    overlay_state.origin_x = bounds.x;
+    overlay_state.origin_y = bounds.y;
+    overlay_state.width = bounds.width;
+    overlay_state.height = bounds.height;
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn ensure_click_position_overlay_window(
     app: &tauri::AppHandle,
 ) -> Result<(WebviewWindow, bool), String> {
@@ -603,7 +738,7 @@ fn ensure_click_position_overlay_window(
         return Ok((window, false));
     }
 
-    let bounds = virtual_screen_bounds();
+    let bounds = overlay_desktop_bounds(app)?;
     let window = WebviewWindowBuilder::new(
         app,
         CLICK_POSITION_OVERLAY_WINDOW_LABEL,
@@ -624,14 +759,14 @@ fn ensure_click_position_overlay_window(
     .build()
     .map_err(|error| format!("Unable to create click position overlay: {error}"))?;
 
-    configure_click_position_overlay_window(&window, &ClickPositionOverlayState::default(), false)?;
+    prepare_click_position_overlay_window(&window)?;
 
     Ok((window, true))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn sync_click_position_overlay_window_bounds(window: &WebviewWindow) -> Result<(), String> {
-    let bounds = virtual_screen_bounds();
+    let bounds = overlay_desktop_bounds(&window.app_handle())?;
 
     window
         .set_position(PhysicalPosition::new(bounds.x, bounds.y))
@@ -643,19 +778,24 @@ fn sync_click_position_overlay_window_bounds(window: &WebviewWindow) -> Result<(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-fn configure_click_position_overlay_window(
-    window: &WebviewWindow,
-    overlay_state: &ClickPositionOverlayState,
-    interactive: bool,
-) -> Result<(), String> {
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn prepare_click_position_overlay_window(window: &WebviewWindow) -> Result<(), String> {
     sync_click_position_overlay_window_bounds(window)?;
     window
         .set_resizable(false)
         .map_err(|error| format!("Unable to disable click position overlay resizing: {error}"))?;
     window
         .set_focusable(false)
-        .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))?;
+        .map_err(|error| format!("Unable to disable click position overlay focus: {error}"))
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn configure_click_position_overlay_window(
+    window: &WebviewWindow,
+    overlay_state: &ClickPositionOverlayState,
+    interactive: bool,
+) -> Result<(), String> {
+    prepare_click_position_overlay_window(window)?;
 
     let accepts_cursor_events = overlay_state.editable || interactive;
     window
@@ -669,27 +809,18 @@ fn click_position_overlay_state(
     overlay: ClickPositionOverlayRequest,
     process_picker: ProcessPickerOverlayState,
 ) -> ClickPositionOverlayState {
-    #[cfg(target_os = "windows")]
-    let (origin_x, origin_y, width, height) = {
-        let bounds = virtual_screen_bounds();
-        (bounds.x, bounds.y, bounds.width, bounds.height)
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let (origin_x, origin_y, width, height) = (0, 0, 0, 0);
-
     ClickPositionOverlayState {
         click_region: overlay.click_region,
         edge_stop: edge_stop_overlay_state(&overlay.edge_stop),
         editable: overlay.editable,
-        height,
-        origin_x,
-        origin_y,
+        height: 0,
+        origin_x: 0,
+        origin_y: 0,
         positions: overlay.positions,
         process_picker,
         theme: overlay.theme,
         visible: overlay.visible,
-        width,
+        width: 0,
     }
 }
 
@@ -711,7 +842,7 @@ fn edge_stop_widths_from_overlay(request: &EdgeStopOverlayRequest) -> EdgeStopWi
 }
 
 fn edge_stop_overlay_state(request: &EdgeStopOverlayRequest) -> EdgeStopOverlayState {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let runtime = edge_stop_runtime(edge_stop_widths_from_overlay(request));
 
@@ -721,14 +852,16 @@ fn edge_stop_overlay_state(request: &EdgeStopOverlayRequest) -> EdgeStopOverlayS
         };
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = request;
         EdgeStopOverlayState::default()
     }
 }
 
-fn stored_click_position_overlay_state(state: &AppState) -> Result<ClickPositionOverlayState, String> {
+fn stored_click_position_overlay_state(
+    state: &AppState,
+) -> Result<ClickPositionOverlayState, String> {
     state
         .click_position_overlay
         .lock()
@@ -740,7 +873,7 @@ fn overlay_should_be_visible(overlay_state: &ClickPositionOverlayState) -> bool 
     overlay_state.visible || overlay_state.process_picker.active
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn apply_click_position_overlay_state(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -750,14 +883,11 @@ fn apply_click_position_overlay_state(
         let _ = update_click_position_overlay_interactive_state(state, false);
 
         if let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
-            let overlay_loaded = state
-                .click_position_overlay_loaded
-                .lock()
-                .map(|loaded| *loaded)
-                .unwrap_or(false);
+            let overlay_loaded = is_click_position_overlay_loaded(state);
 
-            let _ = configure_click_position_overlay_window(&window, overlay_state, false);
+            let _ = prepare_click_position_overlay_window(&window);
             if overlay_loaded {
+                let _ = configure_click_position_overlay_window(&window, overlay_state, false);
                 let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, overlay_state);
             }
             let _ = window.hide();
@@ -767,19 +897,23 @@ fn apply_click_position_overlay_state(
     }
 
     let (window, created) = ensure_click_position_overlay_window(app)?;
-    let overlay_loaded = state
-        .click_position_overlay_loaded
-        .lock()
-        .map(|loaded| *loaded)
-        .unwrap_or(false);
+    let overlay_loaded = is_click_position_overlay_loaded(state);
     let interactive = is_click_position_overlay_interactive(state);
 
-    configure_click_position_overlay_window(&window, overlay_state, interactive)?;
-
     if created || !overlay_loaded {
+        prepare_click_position_overlay_window(&window)?;
+
+        #[cfg(target_os = "linux")]
+        if overlay_should_be_visible(overlay_state) {
+            window
+                .show()
+                .map_err(|error| format!("Unable to show click position overlay: {error}"))?;
+        }
+
         return Ok(());
     }
 
+    configure_click_position_overlay_window(&window, overlay_state, interactive)?;
     let _ = window.emit(CLICK_POSITION_OVERLAY_EVENT, overlay_state);
     window
         .show()
@@ -791,8 +925,10 @@ fn apply_click_position_overlay_state(
 fn sync_click_position_overlay_state(
     app: &tauri::AppHandle,
     state: &AppState,
-    overlay_state: ClickPositionOverlayState,
+    mut overlay_state: ClickPositionOverlayState,
 ) -> Result<(), String> {
+    apply_click_position_overlay_bounds(app, &mut overlay_state)?;
+
     {
         let mut current = state
             .click_position_overlay
@@ -801,7 +937,7 @@ fn sync_click_position_overlay_state(
         *current = overlay_state.clone();
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         apply_click_position_overlay_state(app, state, &overlay_state)?;
     }
@@ -818,9 +954,7 @@ fn configure_auto_clicker(
 }
 
 #[tauri::command]
-fn get_auto_clicker_status(
-    state: tauri::State<'_, AppState>,
-) -> Result<AutoClickerStatus, String> {
+fn get_auto_clicker_status(state: tauri::State<'_, AppState>) -> Result<AutoClickerStatus, String> {
     Ok(state.auto_clicker.status())
 }
 
@@ -864,7 +998,6 @@ fn list_running_process_names() -> Result<Vec<String>, String> {
     resolve_running_process_names()
 }
 
-#[cfg(target_os = "windows")]
 #[tauri::command]
 fn pick_process_name_from_click(
     app: tauri::AppHandle,
@@ -881,31 +1014,30 @@ fn pick_process_name_from_click(
     overlay_state.process_picker.active = true;
     overlay_state.process_picker.label = None;
 
-    let mut cursor = POINT { x: 0, y: 0 };
-    if unsafe { GetCursorPos(&mut cursor) } != 0 {
-        overlay_state.process_picker.cursor_x = cursor.x;
-        overlay_state.process_picker.cursor_y = cursor.y;
+    if let Ok((cursor_x, cursor_y)) = resolve_current_cursor_position() {
+        overlay_state.process_picker.cursor_x = cursor_x;
+        overlay_state.process_picker.cursor_y = cursor_y;
     }
 
     let selection = (|| {
         sync_click_position_overlay_state(&app, state.inner(), overlay_state.clone())?;
 
-        resolve_pick_process_name_from_click(|cursor, label| {
+        resolve_pick_process_name_from_click(|cursor_x, cursor_y, label| {
             let next_label = label
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
 
-            if overlay_state.process_picker.cursor_x == cursor.x
-                && overlay_state.process_picker.cursor_y == cursor.y
+            if overlay_state.process_picker.cursor_x == cursor_x
+                && overlay_state.process_picker.cursor_y == cursor_y
                 && overlay_state.process_picker.label.as_deref() == next_label.as_deref()
             {
                 return Ok(());
             }
 
             overlay_state.process_picker.active = true;
-            overlay_state.process_picker.cursor_x = cursor.x;
-            overlay_state.process_picker.cursor_y = cursor.y;
+            overlay_state.process_picker.cursor_x = cursor_x;
+            overlay_state.process_picker.cursor_y = cursor_y;
             overlay_state.process_picker.label = next_label;
 
             sync_click_position_overlay_state(&app, state.inner(), overlay_state.clone())
@@ -929,12 +1061,6 @@ fn pick_process_name_from_click(
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-#[tauri::command]
-fn pick_process_name_from_click() -> Result<Option<String>, String> {
-    Ok(None)
 }
 
 #[tauri::command]
@@ -968,25 +1094,11 @@ fn get_click_position_overlay_state(
     stored_click_position_overlay_state(state.inner())
 }
 
-#[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_current_cursor_position() -> Result<CursorPositionResponse, String> {
-    let mut point = POINT { x: 0, y: 0 };
+    let (x, y) = resolve_current_cursor_position()?;
 
-    if unsafe { GetCursorPos(&mut point) } == 0 {
-        return Err("Unable to read cursor position.".into());
-    }
-
-    Ok(CursorPositionResponse {
-        x: point.x,
-        y: point.y,
-    })
-}
-
-#[cfg(not(target_os = "windows"))]
-#[tauri::command]
-fn get_current_cursor_position() -> Result<CursorPositionResponse, String> {
-    Ok(CursorPositionResponse::default())
+    Ok(CursorPositionResponse { x, y })
 }
 
 #[tauri::command]
@@ -1007,12 +1119,15 @@ fn notify_webview_ready(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if window.label() == "main" {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
-            if let Err(error) =
-                set_main_window_opacity_inner(&window, load_saved_window_opacity_percent(&window.app_handle()))
-            {
-                log::warn!("unable to apply main window opacity when webview became ready: {error}");
+            if let Err(error) = set_main_window_opacity_inner(
+                &window,
+                load_saved_window_opacity_percent(&window.app_handle()),
+            ) {
+                log::warn!(
+                    "unable to apply main window opacity when webview became ready: {error}"
+                );
             }
         }
 
@@ -1022,7 +1137,7 @@ fn notify_webview_ready(
     }
 
     if window.label() == CLICK_POSITION_OVERLAY_WINDOW_LABEL {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             if let Ok(mut loaded) = state.click_position_overlay_loaded.lock() {
                 *loaded = true;
@@ -1053,7 +1168,7 @@ fn notify_webview_ready(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[tauri::command]
 fn set_click_position_overlay_interactive(
     app: tauri::AppHandle,
@@ -1061,6 +1176,10 @@ fn set_click_position_overlay_interactive(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     update_click_position_overlay_interactive_state(state.inner(), interactive)?;
+
+    if !is_click_position_overlay_loaded(state.inner()) {
+        return Ok(());
+    }
 
     let Some(window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) else {
         return Ok(());
@@ -1070,45 +1189,44 @@ fn set_click_position_overlay_interactive(
     configure_click_position_overlay_window(&window, &overlay_state, interactive)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[tauri::command]
 fn set_click_position_overlay_interactive(_interactive: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[tauri::command]
 fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, String> {
-    Ok(auto_clicker::read_pressed_keyboard_hotkey()?.map(|hotkey| HotkeyCaptureResponse {
-        code: hotkey.code,
-        label: hotkey.label,
-        source: hotkey.source,
-    }))
+    Ok(
+        auto_clicker::read_pressed_keyboard_hotkey()?.map(|hotkey| HotkeyCaptureResponse {
+            code: hotkey.code,
+            label: hotkey.label,
+            source: hotkey.source,
+        }),
+    )
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[tauri::command]
 fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, String> {
     Ok(None)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[tauri::command]
 fn read_global_hotkey_state(code: String) -> Result<bool, String> {
     auto_clicker::read_hotkey_state(&code, auto_clicker::ClickMode::Hold)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[tauri::command]
 fn read_global_hotkey_state(_code: String) -> Result<bool, String> {
     Ok(false)
 }
 
 #[tauri::command]
-fn sync_main_window_frame(
-    app: tauri::AppHandle,
-    frame: WindowFrameRequest,
-) -> Result<(), String> {
+fn sync_main_window_frame(app: tauri::AppHandle, frame: WindowFrameRequest) -> Result<(), String> {
     let WindowFrameRequest {
         animate,
         width,
@@ -1162,14 +1280,14 @@ fn sync_main_window_frame(
         for step in 1..=RESIZE_STEPS {
             let progress = step as f64 / RESIZE_STEPS as f64;
             let eased_progress = 1.0 - (1.0 - progress).powi(3);
-            let next_width =
-                (start_size.width + (target_size.width - start_size.width) * eased_progress)
-                    .round()
-                    .max(1.0);
-            let next_height =
-                (start_size.height + (target_size.height - start_size.height) * eased_progress)
-                    .round()
-                    .max(1.0);
+            let next_width = (start_size.width
+                + (target_size.width - start_size.width) * eased_progress)
+                .round()
+                .max(1.0);
+            let next_height = (start_size.height
+                + (target_size.height - start_size.height) * eased_progress)
+                .round()
+                .max(1.0);
 
             window
                 .set_size(LogicalSize::new(next_width, next_height))
@@ -1195,14 +1313,14 @@ fn sync_main_window_frame(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[tauri::command]
 fn set_main_window_opacity(app: tauri::AppHandle, opacity: f64) -> Result<(), String> {
     let window = main_window(&app)?;
     set_main_window_opacity_inner(&window, opacity)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[tauri::command]
 fn set_main_window_opacity(_app: tauri::AppHandle, _opacity: f64) -> Result<(), String> {
     Ok(())
@@ -1218,9 +1336,9 @@ fn set_main_window_always_on_top(
         .set_always_on_top(request.always_on_top)
         .map_err(|error| format!("Unable to update always-on-top state: {error}"))?;
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
-        // Windows can drop layered alpha when the topmost state changes.
+        // Some desktop backends can drop alpha when the topmost state changes.
         set_main_window_opacity_inner(&window, request.opacity)?;
     }
 
@@ -1274,13 +1392,8 @@ fn install_main_window_proc(hwnd: isize) {
         return;
     }
 
-    let replaced_proc = unsafe {
-        SetWindowLongPtrW(
-            hwnd,
-            GWLP_WNDPROC,
-            main_window_proc as *const () as isize,
-        )
-    };
+    let replaced_proc =
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, main_window_proc as *const () as isize) };
     let previous_proc = if replaced_proc == 0 {
         original_proc
     } else {
@@ -1369,11 +1482,42 @@ pub fn run() {
                 if let Some(overlay_window) =
                     app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
                 {
-                    let _ = configure_click_position_overlay_window(
-                        &overlay_window,
-                        &ClickPositionOverlayState::default(),
-                        false,
-                    );
+                    let _ = prepare_click_position_overlay_window(&overlay_window);
+                    let _ = overlay_window.hide();
+                }
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let auto_clicker = app.state::<AppState>().auto_clicker.clone();
+
+                    if let Err(error) = set_main_window_opacity_inner(
+                        &main_window,
+                        resolve_window_opacity_percent(startup_settings.as_ref()),
+                    ) {
+                        log::warn!("unable to initialize main window opacity: {error}");
+                    }
+
+                    if let Ok(focused) = main_window.is_focused() {
+                        auto_clicker.set_main_window_focus(focused);
+                    }
+
+                    main_window.on_window_event(move |event| {
+                        if let WindowEvent::Focused(focused) = event {
+                            auto_clicker.set_main_window_focus(*focused);
+                        }
+                    });
+
+                    if let Err(error) = main_window.show() {
+                        log::warn!("unable to show main window during Linux startup: {error}");
+                    }
+                }
+
+                if let Some(overlay_window) =
+                    app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
+                {
+                    let _ = prepare_click_position_overlay_window(&overlay_window);
                     let _ = overlay_window.hide();
                 }
             }
@@ -1430,7 +1574,8 @@ pub fn run() {
 
                     match window.is_minimized() {
                         Ok(true) => {
-                            if let Err(error) = hide_main_window_to_tray_inner(&app, state.inner()) {
+                            if let Err(error) = hide_main_window_to_tray_inner(&app, state.inner())
+                            {
                                 log::error!("unable to send main window to tray: {error}");
                             }
                         }
@@ -1469,25 +1614,36 @@ pub fn run() {
                         &window,
                         load_saved_window_opacity_percent(&webview.app_handle()),
                     ) {
-                        log::warn!("unable to reapply main window opacity after page load: {error}");
+                        log::warn!(
+                            "unable to reapply main window opacity after page load: {error}"
+                        );
                     }
+                }
+
+                #[cfg(target_os = "linux")]
+                {
+                    if let Ok(focused) = webview.window().is_focused() {
+                        webview
+                            .app_handle()
+                            .state::<AppState>()
+                            .auto_clicker
+                            .set_main_window_focus(focused);
+                    }
+
+                    let _ = webview.window().show();
                 }
             }
 
             if webview.label() == CLICK_POSITION_OVERLAY_WINDOW_LABEL
                 && matches!(payload.event(), PageLoadEvent::Finished)
             {
-                #[cfg(target_os = "windows")]
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
                 {
                     if let Some(window) = webview
                         .app_handle()
                         .get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL)
                     {
-                        let _ = configure_click_position_overlay_window(
-                            &window,
-                            &ClickPositionOverlayState::default(),
-                            false,
-                        );
+                        let _ = prepare_click_position_overlay_window(&window);
                         let _ = window.hide();
                     }
                 }

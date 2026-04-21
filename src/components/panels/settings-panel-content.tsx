@@ -8,6 +8,7 @@ import {
   InlineClickPositionControls,
   type ClickPositionControlCallbacks,
 } from "@/components/click-position-panel";
+import { compactControlHeightClassName } from "@/components/compact-control-styles";
 import {
   clickModes,
   clickRateModeLabels,
@@ -606,7 +607,10 @@ export function SettingsPanelContent({
               Click rate
             </Label>
             <Input
-              className="h-8 w-18 bg-background/70 px-2 text-center text-base font-semibold"
+              className={cn(
+                compactControlHeightClassName,
+                "w-18 bg-background/70 px-2 text-center text-base font-semibold",
+              )}
               id={rateId}
               inputMode="numeric"
               onBlur={() =>
@@ -652,7 +656,10 @@ export function SettingsPanelContent({
             </Label>
             <Button
               aria-label="Cycle click rate unit"
-              className="h-8 w-[8.5rem] justify-center rounded-lg bg-background/70 px-3 text-sm font-medium focus-visible:ring-0"
+              className={cn(
+                compactControlHeightClassName,
+                "w-[8.5rem] justify-center rounded-lg bg-background/70 px-3 text-sm font-medium focus-visible:ring-0",
+              )}
               id={rateUnitId}
               onClick={cycleClickRateUnit}
               size="sm"
@@ -666,7 +673,11 @@ export function SettingsPanelContent({
           <div className="flex items-center gap-2">
             <TinyLabel>Hotkey</TinyLabel>
             <Button
-              className={cn("h-8 w-[9rem]", hotkeyTriggerClassName)}
+              className={cn(
+                compactControlHeightClassName,
+                "w-[9rem]",
+                hotkeyTriggerClassName,
+              )}
               data-hotkey-trigger
               id={hotkeyId}
               onClick={() => {
@@ -726,7 +737,10 @@ export function SettingsPanelContent({
             <TinyLabel>Button</TinyLabel>
             <Button
               aria-label="Cycle mouse button"
-              className="h-8 min-w-[6.75rem] justify-center rounded-lg bg-background/70 px-3 text-sm font-medium focus-visible:ring-0"
+              className={cn(
+                compactControlHeightClassName,
+                "min-w-[6.75rem] justify-center rounded-lg bg-background/70 px-3 text-sm font-medium focus-visible:ring-0",
+              )}
               onClick={cycleMouseButton}
               size="sm"
               type="button"
@@ -792,7 +806,10 @@ export function SettingsPanelContent({
             Click rate
           </Label>
           <Input
-            className="h-8 w-20 bg-background/70 px-2 text-center text-base font-semibold"
+            className={cn(
+              compactControlHeightClassName,
+              "w-20 bg-background/70 px-2 text-center text-base font-semibold",
+            )}
             id={rateId}
             inputMode="numeric"
             onBlur={() =>
@@ -822,7 +839,8 @@ export function SettingsPanelContent({
               aria-expanded={isRateUnitDropdownOpen}
               aria-haspopup="listbox"
               className={cn(
-                "flex h-8 w-full items-center justify-between border border-border bg-background/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-background/80 focus-visible:outline-none focus-visible:ring-0",
+                compactControlHeightClassName,
+                "flex w-full items-center justify-between border border-border bg-background/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-background/80 focus-visible:outline-none focus-visible:ring-0",
                 isRateUnitDropdownOpen
                   ? "rounded-t-lg rounded-b-none border-b-transparent bg-background/80"
                   : "rounded-lg",
@@ -914,7 +932,11 @@ export function SettingsPanelContent({
             <TinyLabel>Hotkey</TinyLabel>
           </div>
           <Button
-            className={cn("h-8 w-[14rem] max-w-full", hotkeyTriggerClassName)}
+            className={cn(
+              compactControlHeightClassName,
+              "w-[14rem] max-w-full",
+              hotkeyTriggerClassName,
+            )}
             data-hotkey-trigger
             id={hotkeyId}
             onClick={() => {

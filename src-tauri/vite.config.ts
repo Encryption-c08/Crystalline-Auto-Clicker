@@ -51,6 +51,11 @@ export default defineConfig({
     },
   },
   build: {
+    // Linux distributions often ship an older WebKitGTK runtime than the
+    // Chromium-based Windows webview. Keep the bundle conservative so the UI
+    // doesn't fail to parse or paint as a black rectangle.
+    target: "es2020",
+    cssTarget: "safari14",
     outDir: path.resolve(frontendRoot, "dist"),
     emptyOutDir: true,
   },

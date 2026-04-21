@@ -1,6 +1,12 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 
+import {
+  getSafeStorageItem,
+  listenToMediaQuery,
+  setSafeStorageItem,
+} from "@/lib/browser"
+
 type Theme = "dark" | "light" | "system"
 type ResolvedTheme = "dark" | "light"
 
@@ -66,11 +72,11 @@ export function ThemeProvider({
   ...props
 }: ThemeProviderProps) {
   const [theme, setThemeState] = React.useState<Theme>(() => {
-    if (!storageKey) {
+    if (storageKey === null) {
       return defaultTheme
     }
 
-    const storedTheme = localStorage.getItem(storageKey)
+    const storedTheme = getSafeStorageItem(storageKey)
     if (isTheme(storedTheme)) {
       return storedTheme
     }
@@ -81,7 +87,7 @@ export function ThemeProvider({
   const setTheme = React.useCallback(
     (nextTheme: Theme) => {
       if (storageKey) {
-        localStorage.setItem(storageKey, nextTheme)
+        setSafeStorageItem(storageKey, nextTheme)
       }
       setThemeState(nextTheme)
     },
@@ -119,11 +125,7 @@ export function ThemeProvider({
       applyTheme("system")
     }
 
-    mediaQuery.addEventListener("change", handleChange)
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleChange)
-    }
+    return listenToMediaQuery(mediaQuery, handleChange)
   }, [theme, applyTheme])
 
   React.useEffect(() => {

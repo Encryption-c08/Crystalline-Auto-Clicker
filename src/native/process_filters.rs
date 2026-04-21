@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use std::collections::HashSet;
 
 #[cfg(target_os = "windows")]
@@ -7,6 +8,8 @@ use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 #[cfg(target_os = "windows")]
 use std::{mem::size_of, ptr::null_mut, thread, time::Duration};
 
+#[cfg(target_os = "linux")]
+use crate::linux_processes;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
     Foundation::{CloseHandle, HWND, INVALID_HANDLE_VALUE, LPARAM, POINT},
@@ -19,18 +22,16 @@ use windows_sys::Win32::{
             CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
             TH32CS_SNAPPROCESS,
         },
-        Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-        },
+        Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION},
     },
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
         WindowsAndMessaging::{
-            DestroyIcon, DrawIconEx, EnumWindows, GetAncestor, GetCursorPos,
-            GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowTextLengthW,
-            GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, WindowFromPoint,
-            DI_NORMAL, GA_ROOT, GW_OWNER, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+            DestroyIcon, DrawIconEx, EnumWindows, GetAncestor, GetCursorPos, GetForegroundWindow,
+            GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
+            GetWindowThreadProcessId, IsWindowVisible, WindowFromPoint, DI_NORMAL, GA_ROOT,
+            GWL_EXSTYLE, GW_OWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
         },
     },
 };
@@ -40,7 +41,10 @@ mod process_filters_shared;
 
 pub(crate) use process_filters_shared::OpenAppProcess;
 
-const WINDOWS_EXECUTABLE_SUFFIX: &str = ".exe";
+#[cfg(target_os = "windows")]
+const PROCESS_EXECUTABLE_SUFFIX: Option<&str> = Some(".exe");
+#[cfg(target_os = "linux")]
+const PROCESS_EXECUTABLE_SUFFIX: Option<&str> = None;
 
 #[cfg(target_os = "windows")]
 const OPEN_APP_ICON_SIZE: i32 = 32;
@@ -53,16 +57,13 @@ struct HoveredOpenAppWindow {
 }
 
 pub(crate) fn normalize_process_name(value: &str) -> Option<String> {
-    process_filters_shared::normalize_process_name_with_suffix(
-        value,
-        Some(WINDOWS_EXECUTABLE_SUFFIX),
-    )
+    process_filters_shared::normalize_process_name_with_suffix(value, PROCESS_EXECUTABLE_SUFFIX)
 }
 
 pub(crate) fn normalize_process_name_list(values: &[String]) -> Vec<String> {
     process_filters_shared::normalize_process_name_list_with_suffix(
         values,
-        Some(WINDOWS_EXECUTABLE_SUFFIX),
+        PROCESS_EXECUTABLE_SUFFIX,
     )
 }
 
@@ -75,7 +76,7 @@ pub(crate) fn is_process_allowed(
         process_name,
         whitelist,
         blacklist,
-        Some(WINDOWS_EXECUTABLE_SUFFIX),
+        PROCESS_EXECUTABLE_SUFFIX,
     )
 }
 
@@ -131,7 +132,11 @@ fn with_process_snapshot<T>(
 #[cfg(target_os = "windows")]
 fn root_window(window: HWND) -> HWND {
     let root = unsafe { GetAncestor(window, GA_ROOT) };
-    if root.is_null() { window } else { root }
+    if root.is_null() {
+        window
+    } else {
+        root
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -208,8 +213,7 @@ fn window_title_by_window(window: HWND) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn process_executable_path_by_id(process_id: u32) -> Result<Option<String>, String> {
-    let process_handle =
-        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
     if process_handle.is_null() {
         return Ok(None);
     }
@@ -287,7 +291,9 @@ fn icon_data_url_for_executable_path(executable_path: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn icon_data_url_from_hicon(icon_handle: windows_sys::Win32::UI::WindowsAndMessaging::HICON) -> Option<String> {
+fn icon_data_url_from_hicon(
+    icon_handle: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
+) -> Option<String> {
     let screen_dc = unsafe { GetDC(null_mut()) };
     if screen_dc.is_null() {
         return None;
@@ -397,7 +403,10 @@ fn open_app_process_by_window(window: HWND) -> Result<Option<OpenAppProcess>, St
         .as_deref()
         .and_then(icon_data_url_for_executable_path);
 
-    Ok(Some(OpenAppProcess { icon_data_url, name }))
+    Ok(Some(OpenAppProcess {
+        icon_data_url,
+        name,
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -456,7 +465,10 @@ fn hovered_open_app_at_point(point: POINT) -> Result<Option<HoveredOpenAppWindow
 
     let title = window_title_by_window(window).unwrap_or_else(|| process_name.clone());
 
-    Ok(Some(HoveredOpenAppWindow { process_name, title }))
+    Ok(Some(HoveredOpenAppWindow {
+        process_name,
+        title,
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -512,18 +524,20 @@ pub(crate) fn list_open_app_processes() -> Result<Vec<OpenAppProcess>, String> {
         return Err(error);
     }
 
-    state.processes.sort_by(|left, right| left.name.cmp(&right.name));
+    state
+        .processes
+        .sort_by(|left, right| left.name.cmp(&right.name));
     Ok(state.processes)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub(crate) fn list_running_process_names() -> Result<Vec<String>, String> {
-    Ok(Vec::new())
+    linux_processes::list_running_process_names()
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub(crate) fn list_open_app_processes() -> Result<Vec<OpenAppProcess>, String> {
-    Ok(Vec::new())
+    linux_processes::list_open_app_processes()
 }
 
 #[cfg(target_os = "windows")]
@@ -535,6 +549,11 @@ pub(crate) fn process_name_by_id(process_id: u32) -> Result<Option<String>, Stri
             None
         }
     })
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn process_name_by_id(process_id: u32) -> Result<Option<String>, String> {
+    linux_processes::process_name_by_id(process_id)
 }
 
 #[cfg(target_os = "windows")]
@@ -556,9 +575,9 @@ pub(crate) fn foreground_process_id() -> Option<u32> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub(crate) fn foreground_process_id() -> Option<u32> {
-    None
+    linux_processes::foreground_process_id()
 }
 
 #[cfg(target_os = "windows")]
@@ -570,14 +589,18 @@ pub(crate) fn foreground_process_name() -> Result<Option<String>, String> {
     process_name_by_id(process_id)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
 pub(crate) fn foreground_process_name() -> Result<Option<String>, String> {
-    Ok(None)
+    let Some(process_id) = foreground_process_id() else {
+        return Ok(None);
+    };
+
+    process_name_by_id(process_id)
 }
 
 #[cfg(target_os = "windows")]
 pub(crate) fn pick_process_name_from_click(
-    mut on_hover: impl FnMut(POINT, Option<&str>) -> Result<(), String>,
+    mut on_hover: impl FnMut(i32, i32, Option<&str>) -> Result<(), String>,
 ) -> Result<Option<String>, String> {
     while is_virtual_key_pressed(VK_LBUTTON as i32) {
         thread::sleep(Duration::from_millis(8));
@@ -602,7 +625,7 @@ pub(crate) fn pick_process_name_from_click(
             || cursor.y != last_cursor.y
             || hovered_title != last_hovered_title.as_deref()
         {
-            on_hover(cursor, hovered_title)?;
+            on_hover(cursor.x, cursor.y, hovered_title)?;
             last_cursor = cursor;
             last_hovered_title = hovered_title.map(ToOwned::to_owned);
         }
@@ -621,7 +644,24 @@ pub(crate) fn pick_process_name_from_click(
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-pub(crate) fn pick_process_name_from_click() -> Result<Option<String>, String> {
-    Ok(None)
+#[cfg(target_os = "linux")]
+pub(crate) fn pick_process_name_from_click(
+    on_hover: impl FnMut(i32, i32, Option<&str>) -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    linux_processes::pick_process_name_from_click(on_hover)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn current_cursor_position() -> Result<(i32, i32), String> {
+    let mut cursor = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return Err("Unable to read cursor position.".into());
+    }
+
+    Ok((cursor.x, cursor.y))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn current_cursor_position() -> Result<(i32, i32), String> {
+    linux_processes::current_cursor_position()
 }

@@ -1,11 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { AlwaysOnTopButton } from "@/components/always-on-top-button";
+import { isLinuxDesktop, listenToMediaQuery } from "@/lib/browser";
 import { isTauri, trackedInvoke } from "@/lib/tauri";
 
 type WindowAction = "close" | "minimize" | "toggle-maximize";
+
+function isInteractiveTitleBarTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      "button, input, textarea, select, a, [role='button'], [role='listbox'], [role='option'], [data-window-control]",
+    ),
+  );
+}
 
 async function handleWindowAction(
   action: WindowAction,
@@ -72,6 +85,7 @@ export function TitleBar({
   const [visibleTitle, setVisibleTitle] = useState("");
   const [isDeletingTitle, setIsDeletingTitle] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const linuxDesktop = isLinuxDesktop();
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -82,10 +96,7 @@ export function TitleBar({
 
     updateMotionPreference();
 
-    mediaQuery.addEventListener("change", updateMotionPreference);
-
-    return () =>
-      mediaQuery.removeEventListener("change", updateMotionPreference);
+    return listenToMediaQuery(mediaQuery, updateMotionPreference);
   }, []);
 
   useEffect(() => {
@@ -121,12 +132,27 @@ export function TitleBar({
     return () => window.clearTimeout(timeoutId);
   }, [isDeletingTitle, prefersReducedMotion, titleText, visibleTitle]);
 
+  function handleTitleBarMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!linuxDesktop || !isTauri() || event.button !== 0) {
+      return;
+    }
+
+    if (isInteractiveTitleBarTarget(event.target)) {
+      return;
+    }
+
+    void getCurrentWindow().startDragging();
+  }
+
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border/80 bg-background/95 backdrop-blur">
-      <div className="flex h-11 items-center gap-3 px-4">
+      <div
+        className="flex h-11 items-center gap-3 px-4"
+        onMouseDown={handleTitleBarMouseDown}
+      >
         <div
           className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground"
-          data-tauri-drag-region
+          data-tauri-drag-region={linuxDesktop ? undefined : ""}
         >
           <span className="inline-flex max-w-full items-center align-middle">
             <span className="titlebar-typewriter truncate whitespace-nowrap">

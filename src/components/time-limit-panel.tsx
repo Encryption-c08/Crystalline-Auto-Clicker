@@ -1,26 +1,27 @@
-import type { Dispatch, ReactNode, SetStateAction } from "react"
-import { useEffect, useRef, useState } from "react"
+import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { CheckIcon, ChevronDownIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 
+import { compactSplitFieldClassName } from "@/components/compact-control-styles";
 import {
   clickRateUnitLabels,
   timeLimitUnits,
   type AutoClickerSettings,
   type ClickRateUnit,
-} from "@/config/settings"
-import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency"
+} from "@/config/settings";
+import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency";
+import { finalizeTimeLimit, normalizeTimeLimitInput } from "@/config/runtime";
+import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay";
+import { Input } from "@tauri-ui/components/ui/input";
 import {
-  finalizeTimeLimit,
-  normalizeTimeLimitInput,
-} from "@/config/runtime"
-import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay"
-import { Input } from "@tauri-ui/components/ui/input"
-import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
-import { cn } from "@tauri-ui/lib/utils"
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@tauri-ui/components/ui/toggle-group";
+import { cn } from "@tauri-ui/lib/utils";
 
 const TIME_LIMIT_DESCRIPTION =
-  "Automatically stops the auto clicker after the selected amount of time."
+  "Automatically stops the auto clicker after the selected amount of time.";
 
 function DescriptionTooltip({ children }: { children: ReactNode }) {
   return (
@@ -33,32 +34,32 @@ function DescriptionTooltip({ children }: { children: ReactNode }) {
         <div className="ui-themed-tooltip-arrow absolute top-full left-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-[5px] rotate-45 border-r border-b" />
       </div>
     </div>
-  )
+  );
 }
 
 type TimeLimitPanelProps = {
-  onUnavailablePress?: (target: DisabledDependencyTarget) => void
-  settings: AutoClickerSettings
-  setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
-}
+  onUnavailablePress?: (target: DisabledDependencyTarget) => void;
+  settings: AutoClickerSettings;
+  setSettings: Dispatch<SetStateAction<AutoClickerSettings>>;
+};
 
 export function TimeLimitPanel({
   onUnavailablePress,
   settings,
   setSettings,
 }: TimeLimitPanelProps) {
-  const { clickMode, timeLimit, timeLimitEnabled, timeLimitUnit } = settings
-  const isTimeLimitAvailable = clickMode === "toggle"
-  const isTimeLimitActive = isTimeLimitAvailable && timeLimitEnabled
+  const { clickMode, timeLimit, timeLimitEnabled, timeLimitUnit } = settings;
+  const isTimeLimitAvailable = clickMode === "toggle";
+  const isTimeLimitActive = isTimeLimitAvailable && timeLimitEnabled;
   const unavailableReason = !isTimeLimitAvailable
     ? "Disabled due to Activation: Hold"
-    : null
-  const [isTimeLimitUnitOpen, setIsTimeLimitUnitOpen] = useState(false)
-  const timeLimitUnitRef = useRef<HTMLDivElement | null>(null)
+    : null;
+  const [isTimeLimitUnitOpen, setIsTimeLimitUnitOpen] = useState(false);
+  const timeLimitUnitRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!isTimeLimitUnitOpen) {
-      return undefined
+      return undefined;
     }
 
     function handlePointerDown(event: MouseEvent) {
@@ -66,36 +67,36 @@ export function TimeLimitPanel({
         timeLimitUnitRef.current &&
         !timeLimitUnitRef.current.contains(event.target as Node)
       ) {
-        setIsTimeLimitUnitOpen(false)
+        setIsTimeLimitUnitOpen(false);
       }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setIsTimeLimitUnitOpen(false)
+        setIsTimeLimitUnitOpen(false);
       }
     }
 
-    window.addEventListener("mousedown", handlePointerDown)
-    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown)
-      window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [isTimeLimitUnitOpen])
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isTimeLimitUnitOpen]);
 
   useEffect(() => {
     if (!isTimeLimitAvailable) {
-      setIsTimeLimitUnitOpen(false)
+      setIsTimeLimitUnitOpen(false);
     }
-  }, [isTimeLimitAvailable])
+  }, [isTimeLimitAvailable]);
 
   const inputGroup = (
     <div
       className={cn(
-        "flex h-8 min-w-0 items-stretch overflow-visible transition-colors",
-        !isTimeLimitActive && "opacity-70"
+        compactSplitFieldClassName,
+        !isTimeLimitActive && "opacity-70",
       )}
     >
       <div
@@ -103,7 +104,7 @@ export function TimeLimitPanel({
           "flex items-stretch overflow-hidden rounded-l-lg border border-r-0 transition-colors",
           isTimeLimitActive
             ? "border-border/70 bg-background/65"
-            : "border-border/60 bg-background/30"
+            : "border-border/60 bg-background/30",
         )}
       >
         <Input
@@ -136,12 +137,12 @@ export function TimeLimitPanel({
             "flex h-full w-full items-center justify-between gap-2 border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-0",
             isTimeLimitActive
               ? cn(
-                "border-border/70 bg-background/65 text-muted-foreground hover:bg-background/55",
-                isTimeLimitUnitOpen
-                  ? "rounded-tr-lg rounded-br-none bg-background/80"
-                  : "rounded-r-lg"
+                  "border-border/70 bg-background/65 text-muted-foreground hover:bg-background/55",
+                  isTimeLimitUnitOpen
+                    ? "rounded-tr-lg rounded-br-none bg-background/80"
+                    : "rounded-r-lg",
                 )
-              : "cursor-not-allowed rounded-r-lg border-border/60 bg-background/30 text-muted-foreground/80"
+              : "cursor-not-allowed rounded-r-lg border-border/60 bg-background/30 text-muted-foreground/80",
           )}
           disabled={!isTimeLimitActive}
           onClick={() => setIsTimeLimitUnitOpen((current) => !current)}
@@ -151,7 +152,7 @@ export function TimeLimitPanel({
           <ChevronDownIcon
             className={cn(
               "size-3.5 transition-transform duration-200",
-              isTimeLimitUnitOpen && "rotate-180"
+              isTimeLimitUnitOpen && "rotate-180",
             )}
           />
         </button>
@@ -163,7 +164,7 @@ export function TimeLimitPanel({
           >
             <div className="p-1">
               {timeLimitUnits.map((value) => {
-                const isSelected = value === timeLimitUnit
+                const isSelected = value === timeLimitUnit;
 
                 return (
                   <button
@@ -171,15 +172,15 @@ export function TimeLimitPanel({
                       "flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm font-medium transition-colors",
                       isSelected
                         ? "bg-muted-foreground/14 text-foreground"
-                        : "text-foreground/88 hover:bg-muted-foreground/10"
+                        : "text-foreground/88 hover:bg-muted-foreground/10",
                     )}
                     key={value}
                     onClick={() => {
                       setSettings((current) => ({
                         ...current,
                         timeLimitUnit: value as ClickRateUnit,
-                      }))
-                      setIsTimeLimitUnitOpen(false)
+                      }));
+                      setIsTimeLimitUnitOpen(false);
                     }}
                     role="option"
                     type="button"
@@ -188,18 +189,18 @@ export function TimeLimitPanel({
                     <CheckIcon
                       className={cn(
                         "size-3.5 text-foreground/80 transition-opacity",
-                        isSelected ? "opacity-100" : "opacity-0"
+                        isSelected ? "opacity-100" : "opacity-0",
                       )}
                     />
                   </button>
-                )
+                );
               })}
             </div>
           </div>
         ) : null}
       </div>
     </div>
-  )
+  );
 
   const rowContent = (
     <div
@@ -207,7 +208,7 @@ export function TimeLimitPanel({
         "flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-colors",
         isTimeLimitActive
           ? "border-border/70 bg-card/35"
-          : "border-border/60 bg-background/20 hover:bg-background/28"
+          : "border-border/60 bg-background/20 hover:bg-background/28",
       )}
     >
       <div className="min-w-0 shrink-0 pr-2">
@@ -225,15 +226,15 @@ export function TimeLimitPanel({
           className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
           onValueChange={(value) => {
             if (!value || !isTimeLimitAvailable) {
-              return
+              return;
             }
 
             setSettings((current) => ({
               ...current,
               timeLimitEnabled: value === "on",
-            }))
+            }));
             if (value === "off") {
-              setIsTimeLimitUnitOpen(false)
+              setIsTimeLimitUnitOpen(false);
             }
           }}
           size="sm"
@@ -267,7 +268,7 @@ export function TimeLimitPanel({
         ) : null}
       </div>
     </div>
-  )
+  );
 
   return (
     <>
@@ -277,5 +278,5 @@ export function TimeLimitPanel({
         <DescriptionTooltip>{rowContent}</DescriptionTooltip>
       )}
     </>
-  )
+  );
 }

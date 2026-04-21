@@ -3,15 +3,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use windows_sys::Win32::Foundation::POINT;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
-    MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
-};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
-
 use crate::edge_stop::{cursor_hits_edge_stop, EdgeStopRuntime, OverlayRect};
+use crate::linux_x11;
 
 use super::{
     AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, JitterMode,
@@ -142,8 +135,6 @@ pub(crate) enum DispatchMouseClicksOutcome {
 
 const MIN_CLICK_RATE: u64 = 1;
 const MAX_CLICK_RATE: u64 = 5_000;
-const XBUTTON1_DATA: u32 = 0x0001;
-const XBUTTON2_DATA: u32 = 0x0002;
 
 pub(crate) fn click_cadence_from_config(
     config: &AutoClickerCommandConfig,
@@ -371,25 +362,15 @@ pub(crate) fn release_mouse_button(mouse_button: MouseButton) -> Result<(), Stri
 }
 
 pub(crate) fn move_cursor_to_position(position: ClickPositionPoint) -> Result<(), String> {
-    if unsafe { SetCursorPos(position.x, position.y) } == 0 {
-        return Err("Unable to move cursor to the recorded click position.".into());
-    }
-
-    Ok(())
+    linux_x11::warp_pointer(position.x, position.y)
+        .map_err(|_| "Unable to move cursor to the recorded click position.".to_string())
 }
 
 pub(crate) fn current_cursor_position() -> Result<ClickPositionPoint, String> {
-    let mut point = POINT { x: 0, y: 0 };
+    let (x, y) = linux_x11::pointer_position()
+        .map_err(|_| "Unable to read the current cursor position.".to_string())?;
 
-    if unsafe { GetCursorPos(&mut point) } == 0 {
-        return Err("Unable to read the current cursor position.".into());
-    }
-
-    Ok(ClickPositionPoint {
-        id: 0,
-        x: point.x,
-        y: point.y,
-    })
+    Ok(ClickPositionPoint { id: 0, x, y })
 }
 
 fn click_positions_match(left: ClickPositionPoint, right: ClickPositionPoint) -> bool {
@@ -495,39 +476,16 @@ fn click_window_nanos(click_rate_unit: ClickRateUnit) -> u64 {
 }
 
 fn dispatch_mouse_button_event(mouse_button: MouseButton, is_down: bool) -> Result<(), String> {
-    let (down, up, mouse_data) = mouse_button_input(mouse_button);
-    let input = build_mouse_input(if is_down { down } else { up }, mouse_data);
-
-    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
-    if sent != 1 {
-        return Err(format!("Windows only accepted {sent} of 1 mouse inputs."));
-    }
-
-    Ok(())
+    let button = mouse_button_number(mouse_button);
+    linux_x11::fake_button_event(button, is_down)
 }
 
-fn mouse_button_input(mouse_button: MouseButton) -> (u32, u32, u32) {
+fn mouse_button_number(mouse_button: MouseButton) -> u32 {
     match mouse_button {
-        MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, 0),
-        MouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, 0),
-        MouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, 0),
-        MouseButton::Mouse4 => (MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, XBUTTON1_DATA),
-        MouseButton::Mouse5 => (MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, XBUTTON2_DATA),
-    }
-}
-
-fn build_mouse_input(flags: u32, mouse_data: u32) -> INPUT {
-    INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: mouse_data,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
+        MouseButton::Left => 1,
+        MouseButton::Middle => 2,
+        MouseButton::Right => 3,
+        MouseButton::Mouse4 => 8,
+        MouseButton::Mouse5 => 9,
     }
 }

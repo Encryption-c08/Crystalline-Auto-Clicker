@@ -1,26 +1,27 @@
-import type { Dispatch, ReactNode, SetStateAction } from "react"
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 
-import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency"
-import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay"
-import {
-  finalizeJitterAxis,
-  normalizeJitterAxisInput,
-} from "@/config/runtime"
+import { compactInlineFieldClassName } from "@/components/compact-control-styles";
+import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency";
+import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay";
+import { finalizeJitterAxis, normalizeJitterAxisInput } from "@/config/runtime";
 import {
   jitterModeLabels,
   jitterModes,
   type AutoClickerSettings,
-} from "@/config/settings"
-import { Input } from "@tauri-ui/components/ui/input"
-import { ToggleGroup, ToggleGroupItem } from "@tauri-ui/components/ui/toggle-group"
-import { cn } from "@tauri-ui/lib/utils"
+} from "@/config/settings";
+import { Input } from "@tauri-ui/components/ui/input";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@tauri-ui/components/ui/toggle-group";
+import { cn } from "@tauri-ui/lib/utils";
 
 function DescriptionTooltip({
   children,
   description,
 }: {
-  children: ReactNode
-  description: string
+  children: ReactNode;
+  description: string;
 }) {
   return (
     <div className="group/tooltip relative">
@@ -32,58 +33,56 @@ function DescriptionTooltip({
         <div className="ui-themed-tooltip-arrow absolute top-full left-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-[5px] rotate-45 border-r border-b" />
       </div>
     </div>
-  )
+  );
 }
 
 type JitterPanelProps = {
-  onUnavailablePress?: (target: DisabledDependencyTarget) => void
-  settings: AutoClickerSettings
-  setSettings: Dispatch<SetStateAction<AutoClickerSettings>>
-}
+  onUnavailablePress?: (target: DisabledDependencyTarget) => void;
+  settings: AutoClickerSettings;
+  setSettings: Dispatch<SetStateAction<AutoClickerSettings>>;
+};
 
 export function JitterPanel({
   onUnavailablePress,
   settings,
   setSettings,
 }: JitterPanelProps) {
-  const { jitterEnabled, jitterMode, jitterX, jitterY, mouseAction } = settings
-  const isJitterAvailable = mouseAction === "click"
-  const isJitterActive = isJitterAvailable && jitterEnabled
+  const { jitterEnabled, jitterMode, jitterX, jitterY, mouseAction } = settings;
+  const isJitterAvailable = mouseAction === "click";
+  const isJitterActive = isJitterAvailable && jitterEnabled;
   const unavailableReason = !isJitterAvailable
     ? "Disabled due to Action: Hold"
-    : null
+    : null;
   const jitterDescription =
-    "Moves the cursor away from the original click point using your X and Y pixel offsets before clicking."
+    "Moves the cursor away from the original click point using your X and Y pixel offsets before clicking.";
   const jitterModeDescriptions = {
     fixed:
       "Always uses the exact X and Y offsets you entered.\nClicks again after returning to the original point.",
     random:
       "Picks a random X and Y offset within your configured range.\nClicks again after returning to the original point whenever the cursor actually moved away from it.",
-  } satisfies Record<AutoClickerSettings["jitterMode"], string>
+  } satisfies Record<AutoClickerSettings["jitterMode"], string>;
 
   function commitJitterAxes() {
     setSettings((current) => ({
       ...current,
       jitterX: finalizeJitterAxis(current.jitterX),
       jitterY: finalizeJitterAxis(current.jitterY),
-    }))
+    }));
   }
 
   const inputGroup = (
     <div
       className={cn(
-        "flex h-8 min-w-0 items-stretch overflow-hidden rounded-lg border transition-colors",
+        compactInlineFieldClassName,
         isJitterActive
           ? "border-border/70 bg-background/65"
-          : "border-border/60 bg-background/30 opacity-70"
+          : "border-border/60 bg-background/30 opacity-70",
       )}
     >
       <div
         className={cn(
           "flex items-center px-2 text-[10px] font-semibold uppercase tracking-[0.18em]",
-          isJitterActive
-            ? "text-muted-foreground"
-            : "text-muted-foreground/80"
+          isJitterActive ? "text-muted-foreground" : "text-muted-foreground/80",
         )}
       >
         X
@@ -106,9 +105,7 @@ export function JitterPanel({
       <div
         className={cn(
           "flex items-center border-l border-border/70 px-2 text-[10px] font-semibold uppercase tracking-[0.18em]",
-          isJitterActive
-            ? "text-muted-foreground"
-            : "text-muted-foreground/80"
+          isJitterActive ? "text-muted-foreground" : "text-muted-foreground/80",
         )}
       >
         Y
@@ -133,15 +130,13 @@ export function JitterPanel({
       <div
         className={cn(
           "flex items-center border-l border-border/70 px-3 text-[11px] font-semibold uppercase tracking-[0.12em]",
-          isJitterActive
-            ? "text-muted-foreground"
-            : "text-muted-foreground/80"
+          isJitterActive ? "text-muted-foreground" : "text-muted-foreground/80",
         )}
       >
         Px
       </div>
     </div>
-  )
+  );
 
   const modeGroup = (
     <div
@@ -149,7 +144,7 @@ export function JitterPanel({
         "flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5 transition-colors",
         isJitterAvailable
           ? "border-border/70 bg-background/45"
-          : "border-border/60 bg-background/30 opacity-70"
+          : "border-border/60 bg-background/30 opacity-70",
       )}
     >
       <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -159,13 +154,13 @@ export function JitterPanel({
         className="rounded-md border border-border bg-background/70"
         onValueChange={(value) => {
           if (!value) {
-            return
+            return;
           }
 
           setSettings((current) => ({
             ...current,
             jitterMode: value as AutoClickerSettings["jitterMode"],
-          }))
+          }));
         }}
         size="sm"
         type="single"
@@ -191,7 +186,7 @@ export function JitterPanel({
         ))}
       </ToggleGroup>
     </div>
-  )
+  );
 
   const rowContent = (
     <div
@@ -199,7 +194,7 @@ export function JitterPanel({
         "flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-colors",
         isJitterActive
           ? "border-border/70 bg-card/35"
-          : "border-border/60 bg-background/20 hover:bg-background/28"
+          : "border-border/60 bg-background/20 hover:bg-background/28",
       )}
     >
       <div className="min-w-0 shrink-0 pr-2">
@@ -218,13 +213,13 @@ export function JitterPanel({
           className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
           onValueChange={(value) => {
             if (!value) {
-              return
+              return;
             }
 
             setSettings((current) => ({
               ...current,
               jitterEnabled: value === "on",
-            }))
+            }));
           }}
           size="sm"
           type="single"
@@ -257,9 +252,7 @@ export function JitterPanel({
         ) : null}
       </div>
     </div>
-  )
+  );
 
-  return (
-    <>{rowContent}</>
-  )
+  return <>{rowContent}</>;
 }

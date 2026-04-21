@@ -1,14 +1,17 @@
 use std::sync::Mutex;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicIsize, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc,
     },
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "windows")]
+use std::sync::atomic::AtomicIsize;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
@@ -17,36 +20,41 @@ use windows_sys::Win32::{
         GetCurrentProcessId, GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST,
     },
     UI::WindowsAndMessaging::{
-        GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsChild, GA_ROOT,
-        GA_ROOTOWNER,
+        GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, IsChild, GA_ROOT, GA_ROOTOWNER,
     },
 };
 
 #[cfg(target_os = "windows")]
 mod clicker_calc;
+#[cfg(target_os = "linux")]
+#[path = "../linux/clicker_calc.rs"]
+mod clicker_calc;
 #[cfg(target_os = "windows")]
 mod hotkeys;
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "linux")]
+#[path = "../linux/hotkeys.rs"]
+mod hotkeys;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(crate) use hotkeys::read_pressed_keyboard_hotkey;
 
-#[cfg(target_os = "windows")]
-use clicker_calc::{
-    click_cadence_from_config, current_cursor_position, dispatch_mouse_clicks, next_cadence_interval,
-    next_throughput_worker_sleep, next_worker_sleep, press_mouse_button, release_mouse_button,
-    wait_until_precise, ClickDurationRange, ClickRandomizer, CursorJitterConfig,
-    DispatchMouseClicksOutcome,
-};
-#[cfg(target_os = "windows")]
-pub(crate) use hotkeys::read_hotkey_state;
-#[cfg(target_os = "windows")]
-use crate::process_filters::{
-    foreground_process_id, is_process_allowed, normalize_process_name_list, process_name_by_id,
-};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use crate::edge_stop::{
     cursor_hits_edge_stop, edge_stop_runtime, EdgeStopRuntime, EdgeStopWidths, OverlayRect,
 };
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use crate::process_filters::normalize_process_name_list;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use crate::process_filters::{foreground_process_id, is_process_allowed, process_name_by_id};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use clicker_calc::{
+    click_cadence_from_config, current_cursor_position, dispatch_mouse_clicks,
+    next_cadence_interval, next_throughput_worker_sleep, next_worker_sleep, press_mouse_button,
+    release_mouse_button, wait_until_precise, ClickDurationRange, ClickRandomizer,
+    CursorJitterConfig, DispatchMouseClicksOutcome,
+};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub(crate) use hotkeys::read_hotkey_state;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use hotkeys::{format_hotkey_label, normalize_hotkey_code, validate_hotkey_code};
 
 #[path = "../shared/clicker.rs"]
@@ -59,34 +67,40 @@ pub use clicker_shared::{
 use clicker_shared::{
     DEFAULT_CLICK_DURATION_MAX, DEFAULT_CLICK_DURATION_MIN, DEFAULT_CLICK_LIMIT,
     DEFAULT_DOUBLE_CLICK_DELAY, DEFAULT_EDGE_STOP_WIDTH, DEFAULT_JITTER_AXIS, DEFAULT_TIME_LIMIT,
-    MAX_CLICK_LIMIT, MAX_EDGE_STOP_WIDTH, MAX_JITTER_AXIS, MAX_TIME_LIMIT,
-    MIN_CLICK_DURATION, MIN_CLICK_LIMIT, MIN_DOUBLE_CLICK_DELAY, MIN_EDGE_STOP_WIDTH,
-    MIN_JITTER_AXIS, MIN_TIME_LIMIT,
+    MAX_CLICK_LIMIT, MAX_EDGE_STOP_WIDTH, MAX_JITTER_AXIS, MAX_TIME_LIMIT, MIN_CLICK_DURATION,
+    MIN_CLICK_LIMIT, MIN_DOUBLE_CLICK_DELAY, MIN_EDGE_STOP_WIDTH, MIN_JITTER_AXIS, MIN_TIME_LIMIT,
 };
 
 const EDGE_STOP_TRIGGERED_STATUS_MESSAGE: &str = "Edge stop touched. Auto clicker disabled.";
 const EDGE_STOP_STATUS_FEEDBACK_DURATION_MS: u64 = 900;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[derive(Clone)]
 pub struct AutoClickerController {
     shared: Arc<AutoClickerShared>,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 struct AutoClickerShared {
     config: Mutex<AutoClickerCommandConfig>,
+    #[cfg(target_os = "windows")]
     main_window_hwnd: AtomicIsize,
+    #[cfg(target_os = "linux")]
+    main_window_focused: AtomicBool,
     shutdown: AtomicBool,
     status: Mutex<AutoClickerStatus>,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 impl AutoClickerController {
     pub fn new() -> Self {
         let config = AutoClickerCommandConfig::default();
         let shared = Arc::new(AutoClickerShared {
             config: Mutex::new(config.clone()),
+            #[cfg(target_os = "windows")]
             main_window_hwnd: AtomicIsize::new(0),
+            #[cfg(target_os = "linux")]
+            main_window_focused: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             status: Mutex::new(AutoClickerStatus::from_config(&config)),
         });
@@ -122,7 +136,18 @@ impl AutoClickerController {
     }
 
     pub fn set_main_window_handle(&self, hwnd: isize) {
+        #[cfg(target_os = "windows")]
         self.shared.main_window_hwnd.store(hwnd, Ordering::Relaxed);
+
+        #[cfg(target_os = "linux")]
+        let _ = hwnd;
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn set_main_window_focus(&self, focused: bool) {
+        self.shared
+            .main_window_focused
+            .store(focused, Ordering::Relaxed);
     }
 
     pub fn status(&self) -> AutoClickerStatus {
@@ -143,19 +168,19 @@ impl AutoClickerController {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 impl Drop for AutoClickerController {
     fn drop(&mut self) {
         self.shared.shutdown.store(true, Ordering::Relaxed);
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub struct AutoClickerController {
     status: Mutex<AutoClickerStatus>,
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 impl AutoClickerController {
     pub fn new() -> Self {
         let config = AutoClickerCommandConfig::default();
@@ -168,7 +193,7 @@ impl AutoClickerController {
         &self,
         _config: AutoClickerCommandConfig,
     ) -> Result<AutoClickerStatus, String> {
-        Err("The auto clicker backend is only implemented on Windows.".into())
+        Err("The auto clicker backend is only implemented on Windows and Linux/X11.".into())
     }
 
     pub fn set_main_window_handle(&self, _hwnd: isize) {}
@@ -190,13 +215,15 @@ impl AutoClickerController {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
     thread::spawn(move || {
         const MAX_CATCH_UP_CLICKS_PER_LOOP: usize = 32;
         const EDGE_STOP_RUNTIME_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
+        #[cfg(target_os = "windows")]
         let timer_resolution_enabled = unsafe { timeBeginPeriod(1) == TIMERR_NOERROR };
+        #[cfg(target_os = "windows")]
         unsafe {
             let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         }
@@ -258,17 +285,9 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             let cadence = cadence_result.as_ref().ok().copied().flatten();
             let clicks_per_cycle = clicks_per_cycle_from_config(&config);
             let double_click_delay_result = double_click_delay_from_config(&config);
-            let double_click_delay = double_click_delay_result
-                .as_ref()
-                .ok()
-                .copied()
-                .flatten();
+            let double_click_delay = double_click_delay_result.as_ref().ok().copied().flatten();
             let click_duration_range_result = click_duration_range_from_config(&config);
-            let click_duration_range = click_duration_range_result
-                .as_ref()
-                .ok()
-                .copied()
-                .flatten();
+            let click_duration_range = click_duration_range_result.as_ref().ok().copied().flatten();
             let jitter_range_result = jitter_range_from_config(&config);
             let jitter_range = jitter_range_result.as_ref().ok().copied().flatten();
             let click_limit_result = click_limit_from_config(&config);
@@ -281,7 +300,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .ok()
                 .and_then(|widths| *widths);
             let hotkey_result = read_hotkey_state(&config.hotkey_code, config.click_mode);
-            let hotkey_pressed = hotkey_result
+            let mut hotkey_pressed = hotkey_result
                 .as_ref()
                 .map(|pressed| *pressed)
                 .unwrap_or(false);
@@ -414,18 +433,17 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .as_ref()
                 .map(|active| *active)
                 .unwrap_or(false);
-            let process_filter_result = if paused_for_app_window
-                || !process_filters_active_from_config(&config)
-            {
-                Ok(true)
-            } else {
-                process_filters_allow_foreground_process(
-                    &config,
-                    &mut last_process_filter_process_id,
-                    &mut last_process_filter_allowed,
-                    config_changed,
-                )
-            };
+            let process_filter_result =
+                if paused_for_app_window || !process_filters_active_from_config(&config) {
+                    Ok(true)
+                } else {
+                    process_filters_allow_foreground_process(
+                        &config,
+                        &mut last_process_filter_process_id,
+                        &mut last_process_filter_allowed,
+                        config_changed,
+                    )
+                };
             let process_filter_allowed = process_filter_result.as_ref().copied().unwrap_or(false);
             let hotkey_uses_output_mouse_button =
                 hotkey_includes_mouse_button(&config.hotkey_code, config.mouse_button);
@@ -442,7 +460,9 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 if let Some(remaining_time_limit) = remaining_time_limit.as_mut() {
                     let now = Instant::now();
                     if let Some(last_tick) = last_time_limit_tick.replace(now) {
-                        match remaining_time_limit.checked_sub(now.saturating_duration_since(last_tick)) {
+                        match remaining_time_limit
+                            .checked_sub(now.saturating_duration_since(last_tick))
+                        {
                             Some(next_remaining) => {
                                 *remaining_time_limit = next_remaining;
                                 false
@@ -476,9 +496,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
             let click_result = if can_dispatch_clicks {
                 match config.mouse_action {
                     MouseAction::Click => {
-                        if let Err(error) =
-                            ensure_mouse_button_released(&mut held_mouse_button)
-                        {
+                        if let Err(error) = ensure_mouse_button_released(&mut held_mouse_button) {
                             clicker_enabled = false;
                             cadence_carry_nanos = 0;
                             next_click_at = None;
@@ -490,15 +508,11 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                             if next_click_at.is_none() {
                                 next_click_at = Some(
                                     Instant::now()
-                                        + next_cadence_interval(
-                                            cadence,
-                                            &mut cadence_carry_nanos,
-                                        ),
+                                        + next_cadence_interval(cadence, &mut cadence_carry_nanos),
                                 );
                                 None
                             } else {
-                                let scheduled_at =
-                                    next_click_at.expect("checked is_some above");
+                                let scheduled_at = next_click_at.expect("checked is_some above");
                                 let now = Instant::now();
 
                                 if now < scheduled_at
@@ -509,28 +523,19 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
                                 let now_after_wait = Instant::now();
                                 if now_after_wait >= scheduled_at {
-                                    let mut due_cycles = 0_usize;
-                                    let mut next_scheduled_at = scheduled_at;
+                                    let hold_mode = matches!(config.click_mode, ClickMode::Hold);
 
-                                    while next_scheduled_at <= now_after_wait
-                                        && due_cycles < MAX_CATCH_UP_CLICKS_PER_LOOP
-                                    {
-                                        due_cycles += 1;
-                                        next_scheduled_at += next_cadence_interval(
-                                            cadence,
-                                            &mut cadence_carry_nanos,
-                                        );
+                                    if hold_mode {
+                                        hotkey_pressed = read_hotkey_state(
+                                            &config.hotkey_code,
+                                            config.click_mode,
+                                        )
+                                        .unwrap_or(false);
                                     }
 
-                                    let requested_click_count =
-                                        due_cycles.saturating_mul(clicks_per_cycle);
-                                    let click_count = remaining_click_limit
-                                        .map(|remaining| requested_click_count.min(remaining as usize))
-                                        .unwrap_or(requested_click_count);
-
-                                    if click_count == 0 {
+                                    if hold_mode && !hotkey_pressed {
                                         clicker_enabled = false;
-                                        limit_locked_until_release = true;
+                                        limit_locked_until_release = false;
                                         remaining_click_limit = None;
                                         remaining_time_limit = None;
                                         last_time_limit_tick = None;
@@ -539,80 +544,233 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         next_click_at = None;
                                         None
                                     } else {
-                                        let jitter_anchor_for_dispatch_result = if jitter_range.is_some()
-                                            && !click_positions_active_from_config(&config)
-                                        {
-                                            if jitter_anchor_position.is_none() {
-                                                match current_cursor_position() {
-                                                    Ok(position) => {
-                                                        jitter_anchor_position = Some(position);
-                                                        Ok(jitter_anchor_position)
+                                        let mut due_cycles = 0_usize;
+                                        let mut next_scheduled_at = scheduled_at;
+
+                                        if hold_mode {
+                                            due_cycles = 1;
+                                            next_scheduled_at += next_cadence_interval(
+                                                cadence,
+                                                &mut cadence_carry_nanos,
+                                            );
+                                        } else {
+                                            while next_scheduled_at <= now_after_wait
+                                                && due_cycles < MAX_CATCH_UP_CLICKS_PER_LOOP
+                                            {
+                                                due_cycles += 1;
+                                                next_scheduled_at += next_cadence_interval(
+                                                    cadence,
+                                                    &mut cadence_carry_nanos,
+                                                );
+                                            }
+                                        }
+
+                                        let requested_click_count =
+                                            due_cycles.saturating_mul(clicks_per_cycle);
+                                        let click_count = remaining_click_limit
+                                            .map(|remaining| {
+                                                requested_click_count.min(remaining as usize)
+                                            })
+                                            .unwrap_or(requested_click_count);
+
+                                        if click_count == 0 {
+                                            clicker_enabled = false;
+                                            limit_locked_until_release = true;
+                                            remaining_click_limit = None;
+                                            remaining_time_limit = None;
+                                            last_time_limit_tick = None;
+                                            jitter_anchor_position = None;
+                                            cadence_carry_nanos = 0;
+                                            next_click_at = None;
+                                            None
+                                        } else {
+                                            let mut toggle_requested_during_dispatch = false;
+                                            let jitter_anchor_for_dispatch_result = if jitter_range
+                                                .is_some()
+                                                && !click_positions_active_from_config(&config)
+                                            {
+                                                if jitter_anchor_position.is_none() {
+                                                    match current_cursor_position() {
+                                                        Ok(position) => {
+                                                            jitter_anchor_position = Some(position);
+                                                            Ok(jitter_anchor_position)
+                                                        }
+                                                        Err(error) => Err(error),
                                                     }
-                                                    Err(error) => Err(error),
+                                                } else {
+                                                    Ok(jitter_anchor_position)
                                                 }
                                             } else {
-                                                Ok(jitter_anchor_position)
-                                            }
-                                        } else {
-                                            Ok(None)
-                                        };
-                                        match jitter_anchor_for_dispatch_result {
-                                            Ok(jitter_anchor_for_dispatch) => {
-                                                let result = if click_positions_active_from_config(&config)
-                                                {
-                                                    let mut executed_click_count = 0_usize;
-                                                    let mut dispatch_error = None;
-
-                                                    for _ in 0..due_cycles {
-                                                        let cycle_click_count = remaining_click_limit
-                                                            .map(|remaining| {
-                                                                clicks_per_cycle.min(remaining as usize)
-                                                            })
-                                                            .unwrap_or(clicks_per_cycle);
-
-                                                        if cycle_click_count == 0 {
-                                                            break;
-                                                        }
-
-                                                        if let Some(position) = next_click_position(
+                                                Ok(None)
+                                            };
+                                            match jitter_anchor_for_dispatch_result {
+                                                Ok(jitter_anchor_for_dispatch) => {
+                                                    let result =
+                                                        if click_positions_active_from_config(
                                                             &config,
-                                                            &mut next_click_position_index,
                                                         ) {
-                                                            match dispatch_mouse_clicks(
-                                                                config.mouse_button,
-                                                                cycle_click_count,
+                                                            let mut executed_click_count = 0_usize;
+                                                            let mut dispatch_error = None;
+
+                                                            for _ in 0..due_cycles {
+                                                                let cycle_click_count =
+                                                                    remaining_click_limit
+                                                                        .map(|remaining| {
+                                                                            clicks_per_cycle.min(
+                                                                                remaining as usize,
+                                                                            )
+                                                                        })
+                                                                        .unwrap_or(
+                                                                            clicks_per_cycle,
+                                                                        );
+
+                                                                if cycle_click_count == 0 {
+                                                                    break;
+                                                                }
+
+                                                                if let Some(position) = next_click_position(
+                                                                &config,
+                                                                &mut next_click_position_index,
+                                                            ) {
+                                                                match dispatch_clicks_with_toggle_interrupt(
+                                                                    &config,
+                                                                    cycle_click_count,
+                                                                    clicks_per_cycle,
+                                                                    double_click_delay,
+                                                                    click_duration_range,
+                                                                    jitter_range,
+                                                                    Some(position),
+                                                                    active_click_region,
+                                                                    active_edge_stop,
+                                                                    &mut click_randomizer,
+                                                                    &mut hotkey_was_pressed,
+                                                                    &mut toggle_requested_during_dispatch,
+                                                                ) {
+                                                                    Ok(DispatchMouseClicksOutcome::Completed(
+                                                                        dispatched_click_count,
+                                                                    )) => {
+                                                                        executed_click_count +=
+                                                                            dispatched_click_count;
+
+                                                                        if let Some(remaining) =
+                                                                            remaining_click_limit
+                                                                                .as_mut()
+                                                                        {
+                                                                            *remaining = remaining
+                                                                                .saturating_sub(
+                                                                                    dispatched_click_count
+                                                                                        as u64,
+                                                                                );
+                                                                            if *remaining == 0 {
+                                                                                break;
+                                                                            }
+                                                                        }
+
+                                                                        if toggle_requested_during_dispatch {
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                    Ok(
+                                                                        DispatchMouseClicksOutcome::EdgeStopTriggered(position),
+                                                                    ) => {
+                                                                        clicker_enabled = false;
+                                                                        limit_locked_until_release =
+                                                                            true;
+                                                                        remaining_click_limit = None;
+                                                                        remaining_time_limit = None;
+                                                                        last_time_limit_tick = None;
+                                                                        jitter_anchor_position = None;
+                                                                        cadence_carry_nanos = 0;
+                                                                        next_click_at = None;
+                                                                        trigger_edge_stop_feedback(
+                                                                            &mut edge_stop_feedback_until,
+                                                                            &mut active_edge_stop_feedback,
+                                                                            &mut next_edge_stop_feedback_id,
+                                                                            position,
+                                                                        );
+                                                                        break;
+                                                                    }
+                                                                    Err(error) => {
+                                                                        dispatch_error = Some(error);
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                            }
+
+                                                            dispatch_error.map(Err).unwrap_or_else(
+                                                                || Ok(executed_click_count),
+                                                            )
+                                                        } else {
+                                                            match dispatch_clicks_with_toggle_interrupt(
+                                                                &config,
+                                                                click_count,
                                                                 clicks_per_cycle,
                                                                 double_click_delay,
                                                                 click_duration_range,
                                                                 jitter_range,
-                                                                Some(position),
+                                                                jitter_anchor_for_dispatch,
                                                                 active_click_region,
                                                                 active_edge_stop,
                                                                 &mut click_randomizer,
+                                                                &mut hotkey_was_pressed,
+                                                                &mut toggle_requested_during_dispatch,
                                                             ) {
-                                                                Ok(DispatchMouseClicksOutcome::Completed(
-                                                                    dispatched_click_count,
-                                                                )) => {
-                                                                    executed_click_count +=
-                                                                        dispatched_click_count;
+                                                            Ok(DispatchMouseClicksOutcome::Completed(
+                                                                dispatched_click_count,
+                                                            )) => Ok(dispatched_click_count),
+                                                            Ok(
+                                                                DispatchMouseClicksOutcome::EdgeStopTriggered(position),
+                                                            ) => {
+                                                                clicker_enabled = false;
+                                                                limit_locked_until_release = true;
+                                                                remaining_click_limit = None;
+                                                                remaining_time_limit = None;
+                                                                last_time_limit_tick = None;
+                                                                jitter_anchor_position = None;
+                                                                cadence_carry_nanos = 0;
+                                                                next_click_at = None;
+                                                                trigger_edge_stop_feedback(
+                                                                    &mut edge_stop_feedback_until,
+                                                                    &mut active_edge_stop_feedback,
+                                                                    &mut next_edge_stop_feedback_id,
+                                                                    position,
+                                                                );
+                                                                Ok(0)
+                                                            }
+                                                            Err(error) => Err(error),
+                                                        }
+                                                        };
 
-                                                                    if let Some(remaining) =
-                                                                        remaining_click_limit
-                                                                            .as_mut()
-                                                                    {
-                                                                        *remaining = remaining
-                                                                            .saturating_sub(
-                                                                                dispatched_click_count
-                                                                                    as u64,
-                                                                            );
-                                                                        if *remaining == 0 {
-                                                                            break;
-                                                                        }
-                                                                    }
+                                                    if toggle_requested_during_dispatch {
+                                                        hotkey_pressed = hotkey_was_pressed;
+                                                        clicker_enabled = false;
+                                                        limit_locked_until_release = false;
+                                                        remaining_click_limit = None;
+                                                        remaining_time_limit = None;
+                                                        last_time_limit_tick = None;
+                                                        jitter_anchor_position = None;
+                                                        next_click_position_index = 0;
+                                                        cadence_carry_nanos = 0;
+                                                        next_click_at = None;
+                                                    }
+
+                                                    if let Ok(executed_click_count) = result {
+                                                        if clicker_enabled {
+                                                            if let Some(remaining) =
+                                                                remaining_click_limit.as_mut()
+                                                            {
+                                                                if !click_positions_active_from_config(
+                                                                    &config,
+                                                                ) {
+                                                                    *remaining = remaining
+                                                                        .saturating_sub(
+                                                                            executed_click_count
+                                                                                as u64,
+                                                                        );
                                                                 }
-                                                                Ok(
-                                                                    DispatchMouseClicksOutcome::EdgeStopTriggered(position),
-                                                                ) => {
+
+                                                                if *remaining == 0 {
                                                                     clicker_enabled = false;
                                                                     limit_locked_until_release =
                                                                         true;
@@ -622,91 +780,28 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                                     jitter_anchor_position = None;
                                                                     cadence_carry_nanos = 0;
                                                                     next_click_at = None;
-                                                                    trigger_edge_stop_feedback(
-                                                                        &mut edge_stop_feedback_until,
-                                                                        &mut active_edge_stop_feedback,
-                                                                        &mut next_edge_stop_feedback_id,
-                                                                        position,
-                                                                    );
-                                                                    break;
+                                                                } else {
+                                                                    next_click_at =
+                                                                        Some(next_scheduled_at);
                                                                 }
-                                                                Err(error) => {
-                                                                    dispatch_error = Some(error);
-                                                                    break;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    dispatch_error.map(Err).unwrap_or_else(|| {
-                                                        Ok(executed_click_count)
-                                                    })
-                                                } else {
-                                                    match dispatch_mouse_clicks(
-                                                        config.mouse_button,
-                                                        click_count,
-                                                        clicks_per_cycle,
-                                                        double_click_delay,
-                                                        click_duration_range,
-                                                        jitter_range,
-                                                        jitter_anchor_for_dispatch,
-                                                        active_click_region,
-                                                        active_edge_stop,
-                                                        &mut click_randomizer,
-                                                    ) {
-                                                        Ok(DispatchMouseClicksOutcome::Completed(
-                                                            dispatched_click_count,
-                                                        )) => Ok(dispatched_click_count),
-                                                        Ok(
-                                                            DispatchMouseClicksOutcome::EdgeStopTriggered(position),
-                                                        ) => {
-                                                            clicker_enabled = false;
-                                                            limit_locked_until_release = true;
-                                                            remaining_click_limit = None;
-                                                            remaining_time_limit = None;
-                                                            last_time_limit_tick = None;
-                                                            jitter_anchor_position = None;
-                                                            cadence_carry_nanos = 0;
-                                                            next_click_at = None;
-                                                            trigger_edge_stop_feedback(
-                                                                &mut edge_stop_feedback_until,
-                                                                &mut active_edge_stop_feedback,
-                                                                &mut next_edge_stop_feedback_id,
-                                                                position,
-                                                            );
-                                                            Ok(0)
-                                                        }
-                                                        Err(error) => Err(error),
-                                                    }
-                                                };
-
-                                                if let Ok(executed_click_count) = result {
-                                                    if clicker_enabled {
-                                                        if let Some(remaining) =
-                                                            remaining_click_limit.as_mut()
-                                                        {
-                                                            if !click_positions_active_from_config(&config) {
-                                                                *remaining = remaining
-                                                                    .saturating_sub(executed_click_count as u64);
-                                                            }
-
-                                                            if *remaining == 0 {
-                                                                clicker_enabled = false;
-                                                                limit_locked_until_release = true;
-                                                                remaining_click_limit = None;
-                                                                remaining_time_limit = None;
-                                                                last_time_limit_tick = None;
-                                                                jitter_anchor_position = None;
-                                                                cadence_carry_nanos = 0;
-                                                                next_click_at = None;
                                                             } else {
-                                                                next_click_at = Some(next_scheduled_at);
+                                                                next_click_at =
+                                                                    Some(next_scheduled_at);
                                                             }
-                                                        } else {
-                                                            next_click_at = Some(next_scheduled_at);
                                                         }
+                                                    } else {
+                                                        clicker_enabled = false;
+                                                        remaining_click_limit = None;
+                                                        remaining_time_limit = None;
+                                                        last_time_limit_tick = None;
+                                                        jitter_anchor_position = None;
+                                                        cadence_carry_nanos = 0;
+                                                        next_click_at = None;
                                                     }
-                                                } else {
+
+                                                    result.err()
+                                                }
+                                                Err(error) => {
                                                     clicker_enabled = false;
                                                     remaining_click_limit = None;
                                                     remaining_time_limit = None;
@@ -714,19 +809,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                     jitter_anchor_position = None;
                                                     cadence_carry_nanos = 0;
                                                     next_click_at = None;
+                                                    Some(error)
                                                 }
-
-                                                result.err()
-                                            }
-                                            Err(error) => {
-                                                clicker_enabled = false;
-                                                remaining_click_limit = None;
-                                                remaining_time_limit = None;
-                                                last_time_limit_tick = None;
-                                                jitter_anchor_position = None;
-                                                cadence_carry_nanos = 0;
-                                                next_click_at = None;
-                                                Some(error)
                                             }
                                         }
                                     }
@@ -749,10 +833,8 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                         cadence_carry_nanos = 0;
                         next_click_at = None;
 
-                        match ensure_mouse_button_held(
-                            &mut held_mouse_button,
-                            config.mouse_button,
-                        ) {
+                        match ensure_mouse_button_held(&mut held_mouse_button, config.mouse_button)
+                        {
                             Ok(()) => None,
                             Err(error) => {
                                 clicker_enabled = false;
@@ -821,18 +903,17 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                     .or(click_result);
             }
 
-            let sleep_for = if can_dispatch_clicks
-                && matches!(config.mouse_action, MouseAction::Click)
-            {
-                next_click_at
-                    .map(|next_click_at| match config.click_engine {
-                        ClickEngine::Classic => next_worker_sleep(next_click_at),
-                        ClickEngine::Throughput => next_throughput_worker_sleep(next_click_at),
-                    })
-                    .unwrap_or_else(|| Duration::from_micros(250))
-            } else {
-                Duration::from_millis(4)
-            };
+            let sleep_for =
+                if can_dispatch_clicks && matches!(config.mouse_action, MouseAction::Click) {
+                    next_click_at
+                        .map(|next_click_at| match config.click_engine {
+                            ClickEngine::Classic => next_worker_sleep(next_click_at),
+                            ClickEngine::Throughput => next_throughput_worker_sleep(next_click_at),
+                        })
+                        .unwrap_or_else(|| Duration::from_micros(250))
+                } else {
+                    Duration::from_millis(4)
+                };
 
             if !sleep_for.is_zero() {
                 thread::sleep(sleep_for);
@@ -847,6 +928,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
 
         let _ = ensure_mouse_button_released(&mut held_mouse_button);
 
+        #[cfg(target_os = "windows")]
         if timer_resolution_enabled {
             unsafe {
                 timeEndPeriod(1);
@@ -855,7 +937,54 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
     });
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn dispatch_clicks_with_toggle_interrupt(
+    config: &AutoClickerCommandConfig,
+    count: usize,
+    clicks_per_cycle: usize,
+    double_click_delay: Option<Duration>,
+    click_duration_range: Option<ClickDurationRange>,
+    cursor_jitter: Option<CursorJitterConfig>,
+    base_position: Option<ClickPositionPoint>,
+    click_region: Option<OverlayRect>,
+    edge_stop: Option<&EdgeStopRuntime>,
+    randomizer: &mut ClickRandomizer,
+    hotkey_was_pressed: &mut bool,
+    toggle_requested_during_dispatch: &mut bool,
+) -> Result<DispatchMouseClicksOutcome, String> {
+    let mut should_interrupt = || {
+        if *toggle_requested_during_dispatch || !matches!(config.click_mode, ClickMode::Toggle) {
+            return *toggle_requested_during_dispatch;
+        }
+
+        let hotkey_pressed =
+            read_hotkey_state(&config.hotkey_code, config.click_mode).unwrap_or(false);
+        let toggle_pressed = hotkey_pressed && !*hotkey_was_pressed;
+        *hotkey_was_pressed = hotkey_pressed;
+
+        if toggle_pressed {
+            *toggle_requested_during_dispatch = true;
+        }
+
+        *toggle_requested_during_dispatch
+    };
+
+    dispatch_mouse_clicks(
+        config.mouse_button,
+        count,
+        clicks_per_cycle,
+        double_click_delay,
+        click_duration_range,
+        cursor_jitter,
+        base_position,
+        click_region,
+        edge_stop,
+        randomizer,
+        &mut should_interrupt,
+    )
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn trigger_edge_stop_feedback(
     edge_stop_feedback_until: &mut Option<Instant>,
     active_edge_stop_feedback: &mut Option<EdgeStopFeedback>,
@@ -868,12 +997,11 @@ fn trigger_edge_stop_feedback(
         x: position.x,
         y: position.y,
     });
-    *edge_stop_feedback_until = Some(
-        Instant::now() + Duration::from_millis(EDGE_STOP_STATUS_FEEDBACK_DURATION_MS),
-    );
+    *edge_stop_feedback_until =
+        Some(Instant::now() + Duration::from_millis(EDGE_STOP_STATUS_FEEDBACK_DURATION_MS));
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn ensure_mouse_button_held(
     held_mouse_button: &mut Option<MouseButton>,
     mouse_button: MouseButton,
@@ -888,10 +1016,8 @@ fn ensure_mouse_button_held(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
-fn ensure_mouse_button_released(
-    held_mouse_button: &mut Option<MouseButton>,
-) -> Result<(), String> {
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn ensure_mouse_button_released(held_mouse_button: &mut Option<MouseButton>) -> Result<(), String> {
     let Some(mouse_button) = *held_mouse_button else {
         return Ok(());
     };
@@ -901,7 +1027,7 @@ fn ensure_mouse_button_released(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(), String> {
     if matches!(config.mouse_action, MouseAction::Click) && config.click_rate.trim().is_empty() {
         return Err("Click rate cannot be empty.".into());
@@ -924,7 +1050,7 @@ fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(),
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_auto_clicker_config(
     mut config: AutoClickerCommandConfig,
 ) -> Result<AutoClickerCommandConfig, String> {
@@ -955,23 +1081,17 @@ fn normalize_auto_clicker_config(
     config.time_limit = normalize_time_limit_value(&config.time_limit)?;
     config.edge_stop_top_width =
         normalize_edge_stop_width_value(&config.edge_stop_top_width, "Top edge stop width")?;
-    config.edge_stop_right_width = normalize_edge_stop_width_value(
-        &config.edge_stop_right_width,
-        "Right edge stop width",
-    )?;
-    config.edge_stop_bottom_width = normalize_edge_stop_width_value(
-        &config.edge_stop_bottom_width,
-        "Bottom edge stop width",
-    )?;
-    config.edge_stop_left_width = normalize_edge_stop_width_value(
-        &config.edge_stop_left_width,
-        "Left edge stop width",
-    )?;
+    config.edge_stop_right_width =
+        normalize_edge_stop_width_value(&config.edge_stop_right_width, "Right edge stop width")?;
+    config.edge_stop_bottom_width =
+        normalize_edge_stop_width_value(&config.edge_stop_bottom_width, "Bottom edge stop width")?;
+    config.edge_stop_left_width =
+        normalize_edge_stop_width_value(&config.edge_stop_left_width, "Left edge stop width")?;
     validate_auto_clicker_config(&config)?;
     Ok(config)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn clicks_per_cycle_from_config(config: &AutoClickerCommandConfig) -> usize {
     if config.double_click_enabled && matches!(config.mouse_action, MouseAction::Click) {
         2
@@ -980,12 +1100,12 @@ fn clicks_per_cycle_from_config(config: &AutoClickerCommandConfig) -> usize {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn process_filters_active_from_config(config: &AutoClickerCommandConfig) -> bool {
     !config.process_whitelist.is_empty() || !config.process_blacklist.is_empty()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn process_filters_allow_foreground_process(
     config: &AutoClickerCommandConfig,
     last_process_id: &mut Option<u32>,
@@ -1019,14 +1139,14 @@ fn process_filters_allow_foreground_process(
     Ok(process_allowed)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn click_positions_active_from_config(config: &AutoClickerCommandConfig) -> bool {
     config.click_position_enabled
         && matches!(config.mouse_action, MouseAction::Click)
         && !config.click_positions.is_empty()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn click_region_active_from_config(config: &AutoClickerCommandConfig) -> Option<OverlayRect> {
     if !config.click_region_enabled || !matches!(config.mouse_action, MouseAction::Click) {
         return None;
@@ -1037,7 +1157,7 @@ fn click_region_active_from_config(config: &AutoClickerCommandConfig) -> Option<
         .filter(|region| region.width > 0 && region.height > 0)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn next_click_position(
     config: &AutoClickerCommandConfig,
     next_click_position_index: &mut usize,
@@ -1046,12 +1166,13 @@ fn next_click_position(
         return None;
     }
 
-    let position = config.click_positions[*next_click_position_index % config.click_positions.len()];
+    let position =
+        config.click_positions[*next_click_position_index % config.click_positions.len()];
     *next_click_position_index = (*next_click_position_index + 1) % config.click_positions.len();
     Some(position)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn double_click_delay_from_config(
     config: &AutoClickerCommandConfig,
 ) -> Result<Option<Duration>, String> {
@@ -1064,12 +1185,12 @@ fn double_click_delay_from_config(
     )?)))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_double_click_delay_value(value: &str) -> Result<String, String> {
     Ok(parse_double_click_delay_value(value)?.to_string())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_double_click_delay_value(value: &str) -> Result<u64, String> {
     let trimmed_value = value.trim();
     let normalized_value = if trimmed_value.is_empty() {
@@ -1091,7 +1212,7 @@ fn parse_double_click_delay_value(value: &str) -> Result<u64, String> {
     Ok(double_click_delay)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn jitter_range_from_config(
     config: &AutoClickerCommandConfig,
 ) -> Result<Option<CursorJitterConfig>, String> {
@@ -1111,12 +1232,12 @@ fn jitter_range_from_config(
     )))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_jitter_axis_value(value: &str, label: &str) -> Result<String, String> {
     Ok(parse_jitter_axis_value(value, label)?.to_string())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_jitter_axis_values(x_value: &str, y_value: &str) -> Result<(i32, i32), String> {
     Ok((
         parse_jitter_axis_value(x_value, "Jitter X axis")?,
@@ -1124,7 +1245,7 @@ fn parse_jitter_axis_values(x_value: &str, y_value: &str) -> Result<(i32, i32), 
     ))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_jitter_axis_value(value: &str, label: &str) -> Result<i32, String> {
     let trimmed_value = value.trim();
     let normalized_value = if trimmed_value.is_empty() {
@@ -1146,7 +1267,7 @@ fn parse_jitter_axis_value(value: &str, label: &str) -> Result<i32, String> {
     Ok(jitter_axis)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn click_duration_range_from_config(
     config: &AutoClickerCommandConfig,
 ) -> Result<Option<ClickDurationRange>, String> {
@@ -1154,10 +1275,8 @@ fn click_duration_range_from_config(
         return Ok(None);
     }
 
-    let (min_duration_ms, max_duration_ms) = parse_click_duration_range_values(
-        &config.click_duration_min,
-        &config.click_duration_max,
-    )?;
+    let (min_duration_ms, max_duration_ms) =
+        parse_click_duration_range_values(&config.click_duration_min, &config.click_duration_max)?;
 
     Ok(Some(ClickDurationRange::from_millis(
         min_duration_ms,
@@ -1165,20 +1284,27 @@ fn click_duration_range_from_config(
     )))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_click_duration_range_values(
     min_value: &str,
     max_value: &str,
 ) -> Result<(String, String), String> {
-    let (min_duration_ms, max_duration_ms) = parse_click_duration_range_values(min_value, max_value)?;
+    let (min_duration_ms, max_duration_ms) =
+        parse_click_duration_range_values(min_value, max_value)?;
     Ok((min_duration_ms.to_string(), max_duration_ms.to_string()))
 }
 
-#[cfg(target_os = "windows")]
-fn parse_click_duration_range_values(min_value: &str, max_value: &str) -> Result<(u64, u64), String> {
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn parse_click_duration_range_values(
+    min_value: &str,
+    max_value: &str,
+) -> Result<(u64, u64), String> {
     let min_fallback = min_value.trim();
-    let min_duration_ms =
-        parse_click_duration_value(min_value, "Click duration minimum", DEFAULT_CLICK_DURATION_MIN)?;
+    let min_duration_ms = parse_click_duration_value(
+        min_value,
+        "Click duration minimum",
+        DEFAULT_CLICK_DURATION_MIN,
+    )?;
     let max_duration_ms = parse_click_duration_value(
         max_value,
         "Click duration maximum",
@@ -1193,7 +1319,7 @@ fn parse_click_duration_range_values(min_value: &str, max_value: &str) -> Result
     Ok((min_duration_ms, max_duration_ms))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_click_duration_value(value: &str, label: &str, fallback: &str) -> Result<u64, String> {
     let trimmed_value = value.trim();
     let normalized_value = if trimmed_value.is_empty() {
@@ -1213,7 +1339,7 @@ fn parse_click_duration_value(value: &str, label: &str, fallback: &str) -> Resul
     Ok(click_duration)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn click_limit_from_config(config: &AutoClickerCommandConfig) -> Result<Option<u64>, String> {
     if !config.click_limit_enabled || !matches!(config.mouse_action, MouseAction::Click) {
         return Ok(None);
@@ -1222,12 +1348,12 @@ fn click_limit_from_config(config: &AutoClickerCommandConfig) -> Result<Option<u
     Ok(Some(parse_click_limit_value(&config.click_limit)?))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_click_limit_value(value: &str) -> Result<String, String> {
     Ok(parse_click_limit_value(value)?.to_string())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_click_limit_value(value: &str) -> Result<u64, String> {
     let trimmed_value = value.trim();
     let normalized_value = if trimmed_value.is_empty() {
@@ -1249,7 +1375,7 @@ fn parse_click_limit_value(value: &str) -> Result<u64, String> {
     Ok(click_limit)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn time_limit_from_config(config: &AutoClickerCommandConfig) -> Result<Option<Duration>, String> {
     if !config.time_limit_enabled || !matches!(config.click_mode, ClickMode::Toggle) {
         return Ok(None);
@@ -1263,12 +1389,12 @@ fn time_limit_from_config(config: &AutoClickerCommandConfig) -> Result<Option<Du
     Ok(Some(Duration::from_millis(time_limit_ms)))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_time_limit_value(value: &str) -> Result<String, String> {
     Ok(parse_time_limit_value(value)?.to_string())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_time_limit_value(value: &str) -> Result<u64, String> {
     let trimmed_value = value.trim();
     let normalized_value = if trimmed_value.is_empty() {
@@ -1290,7 +1416,7 @@ fn parse_time_limit_value(value: &str) -> Result<u64, String> {
     Ok(time_limit)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn time_limit_unit_ms(unit: ClickRateUnit) -> u64 {
     match unit {
         ClickRateUnit::Ms => 1,
@@ -1301,7 +1427,7 @@ fn time_limit_unit_ms(unit: ClickRateUnit) -> u64 {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn edge_stop_widths_from_config(
     config: &AutoClickerCommandConfig,
 ) -> Result<Option<EdgeStopWidths>, String> {
@@ -1312,10 +1438,8 @@ fn edge_stop_widths_from_config(
     let widths = EdgeStopWidths {
         top: parse_edge_stop_width_value(&config.edge_stop_top_width, "Top edge stop width")?
             as i32,
-        right: parse_edge_stop_width_value(
-            &config.edge_stop_right_width,
-            "Right edge stop width",
-        )? as i32,
+        right: parse_edge_stop_width_value(&config.edge_stop_right_width, "Right edge stop width")?
+            as i32,
         bottom: parse_edge_stop_width_value(
             &config.edge_stop_bottom_width,
             "Bottom edge stop width",
@@ -1331,12 +1455,12 @@ fn edge_stop_widths_from_config(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn normalize_edge_stop_width_value(value: &str, label: &str) -> Result<String, String> {
     Ok(parse_edge_stop_width_value(value, label)?.to_string())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn parse_edge_stop_width_value(value: &str, label: &str) -> Result<u64, String> {
     let trimmed_value = value.trim();
     let normalized_value = if trimmed_value.is_empty() {
@@ -1358,7 +1482,7 @@ fn parse_edge_stop_width_value(value: &str, label: &str) -> Result<u64, String> 
     Ok(width)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn hotkey_includes_mouse_button(code: &str, mouse_button: MouseButton) -> bool {
     let target_code = mouse_button_hotkey_code(mouse_button);
 
@@ -1367,7 +1491,7 @@ fn hotkey_includes_mouse_button(code: &str, mouse_button: MouseButton) -> bool {
         .any(|part| part.eq_ignore_ascii_case(target_code))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 fn mouse_button_hotkey_code(mouse_button: MouseButton) -> &'static str {
     match mouse_button {
         MouseButton::Left => "Mouse1",
@@ -1415,4 +1539,9 @@ fn is_app_window_active(shared: &AutoClickerShared) -> Result<bool, String> {
     }
 
     Ok(foreground_process_id != 0 && foreground_process_id == unsafe { GetCurrentProcessId() })
+}
+
+#[cfg(target_os = "linux")]
+fn is_app_window_active(shared: &AutoClickerShared) -> Result<bool, String> {
+    Ok(shared.main_window_focused.load(Ordering::Relaxed))
 }

@@ -65,6 +65,11 @@ import {
   loadSavedAutoClickerSettings,
   saveAutoClickerSettings,
 } from "@/lib/settings-store";
+import {
+  getSafeStorageItem,
+  isLinuxDesktop,
+  setSafeStorageItem,
+} from "@/lib/browser";
 import { setMainWindowOpacity } from "@/lib/window-opacity";
 import { matchesKeyboardEventHotkey } from "@/input/hotkeys";
 import { isTauri, trackedInvoke } from "@/lib/tauri";
@@ -113,14 +118,7 @@ function loadInitialActiveTab(): AppTab {
     return "simple";
   }
 
-  try {
-    return (
-      normalizeAppTab(window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)) ??
-      "simple"
-    );
-  } catch {
-    return "simple";
-  }
+  return normalizeAppTab(getSafeStorageItem(ACTIVE_TAB_STORAGE_KEY)) ?? "simple";
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -214,6 +212,7 @@ function DockButton({
 
 export default function App() {
   const { setTheme, theme } = useTheme();
+  const linuxDesktop = isLinuxDesktop();
   const [settings, setSettings] = useState<AutoClickerSettings>(
     defaultAutoClickerSettings,
   );
@@ -247,6 +246,27 @@ export default function App() {
     () => buildOverlayVisualTheme(settings.themeColors),
     [settings.themeColors],
   );
+  const processRules = useMemo(
+    () =>
+      resolveEnabledProcessRules({
+        processBlacklist: settings.processBlacklist,
+        processBlacklistEnabled: settings.processBlacklistEnabled,
+        processWhitelist: settings.processWhitelist,
+        processWhitelistEnabled: settings.processWhitelistEnabled,
+      }),
+    [
+      settings.processBlacklist,
+      settings.processBlacklistEnabled,
+      settings.processWhitelist,
+      settings.processWhitelistEnabled,
+    ],
+  );
+  const processRulesActive =
+    processRules.blacklist.length > 0 || processRules.whitelist.length > 0;
+
+  function handleTabChange(nextTab: AppTab) {
+    setActiveTab(nextTab);
+  }
 
   function highlightDisabledDependency(target: DisabledDependencyTarget) {
     setDisabledDependencyCue({ target });
@@ -410,6 +430,11 @@ export default function App() {
       return undefined;
     }
 
+    if (!processRulesActive) {
+      setFocusedProcessName((current) => (current === null ? current : null));
+      return undefined;
+    }
+
     let cancelled = false;
     let pollTimeoutId: number | null = null;
 
@@ -444,7 +469,7 @@ export default function App() {
         window.clearTimeout(pollTimeoutId);
       }
     };
-  }, []);
+  }, [processRulesActive]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -668,11 +693,10 @@ export default function App() {
       return;
     }
 
-    const { blacklist, whitelist } = resolveEnabledProcessRules(settings);
     const processRulesAllowFocusedProcess = isProcessAllowedByRules(
       focusedProcessName,
-      whitelist,
-      blacklist,
+      processRules.whitelist,
+      processRules.blacklist,
     );
     const edgeStop = buildEdgeStopConfig(settings);
     const overlayEdgeStop = edgeStopThemePreviewActive
@@ -716,6 +740,7 @@ export default function App() {
     overlayVisualTheme,
     focusedProcessName,
     hasLoadedSettings,
+    processRules,
     settings,
   ]);
 
@@ -898,11 +923,7 @@ export default function App() {
   }, [settings.clickPositionHotkey.code]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
-    } catch (error) {
-      console.warn("Unable to persist active tab", error);
-    }
+    setSafeStorageItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
   }, [activeTab]);
 
   useLayoutEffect(() => {
@@ -936,18 +957,6 @@ export default function App() {
       return undefined;
     }
 
-    if (
-      activeTab === "simple" &&
-      (simpleViewHeight === 0 || simpleViewWidth === 0)
-    ) {
-      return undefined;
-    }
-
-    const target = resolveWindowTarget(
-      activeTab,
-      simpleViewWidth,
-      simpleViewHeight,
-    );
     let cancelled = false;
     let retryTimeoutId: number | null = null;
 
@@ -967,6 +976,19 @@ export default function App() {
       }
     }
 
+    if (
+      activeTab === "simple" &&
+      (simpleViewHeight === 0 || simpleViewWidth === 0)
+    ) {
+      return undefined;
+    }
+
+    const target = resolveWindowTarget(
+      activeTab,
+      simpleViewWidth,
+      simpleViewHeight,
+    );
+
     async function syncWindowFrame(attempt = 0) {
       try {
         if (cancelled) {
@@ -975,7 +997,7 @@ export default function App() {
 
         await trackedInvoke<void>("sync_main_window_frame", {
           frame: {
-            animate: hasShownMainWindowRef.current,
+            animate: hasShownMainWindowRef.current && !linuxDesktop,
             height: target.height,
             minHeight: target.minHeight,
             minWidth: target.minWidth,
@@ -1010,7 +1032,7 @@ export default function App() {
         window.clearTimeout(retryTimeoutId);
       }
     };
-  }, [activeTab, simpleViewHeight, simpleViewWidth]);
+  }, [activeTab, linuxDesktop, simpleViewHeight, simpleViewWidth]);
 
   const advancedPanels = (
     <div className="grid w-full grid-cols-2 items-stretch gap-3">
@@ -1125,13 +1147,13 @@ export default function App() {
           <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-1">
             <DockButton
               active={activeTab === "simple"}
-              onClick={() => setActiveTab("simple")}
+              onClick={() => handleTabChange("simple")}
             >
               Simple
             </DockButton>
             <DockButton
               active={activeTab === "advanced"}
-              onClick={() => setActiveTab("advanced")}
+              onClick={() => handleTabChange("advanced")}
             >
               Advanced
             </DockButton>
@@ -1141,7 +1163,7 @@ export default function App() {
             <DockButton
               active={activeTab === "settings"}
               className="pl-2.5"
-              onClick={() => setActiveTab("settings")}
+              onClick={() => handleTabChange("settings")}
             >
               <Settings2Icon className="size-4" />
               <span>Settings</span>

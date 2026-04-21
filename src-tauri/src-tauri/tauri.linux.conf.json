@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": [
+      "appimage",
+      "deb",
+      "rpm"
+    ],
+    "publisher": "Encryption-c08",
+    "homepage": "https://github.com/Encryption-c08/Crystalline-Auto-Clicker",
+    "license": "GPL-3.0-only",
+    "licenseFile": "../../LICENSE",
+    "category": "Utility",
+    "shortDescription": "Modern desktop auto clicker with hotkeys, click positions, click regions, and safety controls.",
+    "longDescription": "Crystalline Auto Clicker is a desktop auto clicker built to feel fast, polished, and modern instead of looking like a throwaway utility. It includes flexible hotkeys, advanced click behavior controls, edge stop safety features, click positions, click regions, and process filtering."
+  }
+}

@@ -11,6 +11,9 @@ use windows_sys::Win32::{
     },
 };
 
+#[cfg(target_os = "linux")]
+use crate::linux_x11;
+
 #[path = "../shared/edge_stop.rs"]
 mod edge_stop_shared;
 
@@ -33,7 +36,28 @@ pub fn edge_stop_runtime(widths: EdgeStopWidths) -> EdgeStopRuntime {
     EdgeStopRuntime { monitors, zones }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub fn edge_stop_runtime(widths: EdgeStopWidths) -> EdgeStopRuntime {
+    if !widths.any_active() {
+        return EdgeStopRuntime::default();
+    }
+
+    let Ok((width, height)) = linux_x11::display_size() else {
+        return EdgeStopRuntime::default();
+    };
+
+    let monitors = vec![OverlayRect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    }];
+    let zones = build_edge_stop_zones(&monitors, widths);
+
+    EdgeStopRuntime { monitors, zones }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub fn edge_stop_runtime(_widths: EdgeStopWidths) -> EdgeStopRuntime {
     EdgeStopRuntime::default()
 }
