@@ -118,7 +118,7 @@ export function SettingsPanelContent({
     clickPositionDotCount === 1 ? "" : "s"
   }`;
   const isClickPositionActive =
-    settings.mouseAction === "click" && settings.clickPositionEnabled;
+    settings.mouseAction === "click" && clickPositionDotCount > 0;
   const isHotkeyUnbound = hotkey.code === "";
   const hotkeyTriggerClassName = cn(
     "justify-start rounded-lg bg-background/70 px-3 text-sm focus-visible:ring-0",
@@ -1066,16 +1066,6 @@ export function SettingsPanelContent({
                 <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
                   {clickPositionDotLabel}
                 </span>
-                <span
-                  className={cn(
-                    "rounded-md px-1 py-1 text-[10px] leading-none",
-                    isClickPositionActive
-                      ? "bg-muted-foreground/15 text-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {isClickPositionActive ? "On" : "Off"}
-                </span>
               </div>
               <ChevronDownIcon
                 className={cn(
@@ -1106,16 +1096,6 @@ export function SettingsPanelContent({
                   </span>
                   <span className="rounded-md border border-border/60 bg-background/50 px-2 py-1 text-[10px] leading-none text-muted-foreground">
                     {clickPositionDotLabel}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded-md px-1 py-1 text-[10px] leading-none",
-                      isClickPositionActive
-                        ? "bg-muted-foreground/15 text-foreground"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {isClickPositionActive ? "On" : "Off"}
                   </span>
                 </div>
                 <ChevronDownIcon

@@ -3,15 +3,21 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use windows_sys::Win32::Foundation::POINT;
+use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, PostMessageW, SetCursorPos, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+};
 
 use crate::edge_stop::{cursor_hits_edge_stop, EdgeStopRuntime, OverlayRect};
+use crate::non_intrusive_clicks::{
+    resolve_non_intrusive_dispatch_window_at_position, NonIntrusiveClickPosition,
+};
 
 use super::{
     AutoClickerCommandConfig, ClickPositionPoint, ClickRateMode, ClickRateUnit, JitterMode,
@@ -142,6 +148,11 @@ pub(crate) enum DispatchMouseClicksOutcome {
 
 const MIN_CLICK_RATE: u64 = 1;
 const MAX_CLICK_RATE: u64 = 5_000;
+const MK_LBUTTON_WPARAM: WPARAM = 0x0001;
+const MK_RBUTTON_WPARAM: WPARAM = 0x0002;
+const MK_MBUTTON_WPARAM: WPARAM = 0x0010;
+const MK_XBUTTON1_WPARAM: WPARAM = 0x0020;
+const MK_XBUTTON2_WPARAM: WPARAM = 0x0040;
 const XBUTTON1_DATA: u32 = 0x0001;
 const XBUTTON2_DATA: u32 = 0x0002;
 
@@ -330,6 +341,52 @@ pub(crate) fn dispatch_mouse_clicks(
     Ok(DispatchMouseClicksOutcome::Completed(dispatched_click_count))
 }
 
+pub(crate) fn dispatch_non_intrusive_mouse_clicks(
+    mouse_button: MouseButton,
+    count: usize,
+    clicks_per_cycle: usize,
+    double_click_delay: Option<Duration>,
+    click_duration_range: Option<ClickDurationRange>,
+    cursor_jitter: Option<CursorJitterConfig>,
+    base_position: NonIntrusiveClickPosition,
+    randomizer: &mut ClickRandomizer,
+) -> Result<usize, String> {
+    if count == 0 {
+        return Ok(0);
+    }
+
+    let cycle_size = clicks_per_cycle.max(1);
+    let mut dispatched_click_count = 0_usize;
+
+    for click_index in 0..count {
+        let target_position = cursor_jitter
+            .map(|jitter| jitter_non_intrusive_click_position(base_position, jitter, randomizer))
+            .unwrap_or(base_position);
+        let (dispatch_window, dispatch_point) =
+            resolve_non_intrusive_dispatch_window_at_position(target_position)?;
+
+        dispatch_non_intrusive_mouse_click(
+            dispatch_window,
+            dispatch_point,
+            mouse_button,
+            click_duration_range,
+            randomizer,
+        )?;
+        dispatched_click_count += 1;
+
+        let click_ends_cycle = (click_index + 1) % cycle_size == 0;
+        if !click_ends_cycle && click_index + 1 < count {
+            if let Some(double_click_delay) = double_click_delay {
+                if !double_click_delay.is_zero() {
+                    thread::sleep(double_click_delay);
+                }
+            }
+        }
+    }
+
+    Ok(dispatched_click_count)
+}
+
 pub(crate) fn press_mouse_button(mouse_button: MouseButton) -> Result<(), String> {
     dispatch_mouse_button_event(mouse_button, true)
 }
@@ -415,6 +472,37 @@ fn dispatch_single_mouse_click(
     dispatch_mouse_button_event(mouse_button, false)
 }
 
+fn jitter_non_intrusive_click_position(
+    base_position: NonIntrusiveClickPosition,
+    jitter: CursorJitterConfig,
+    randomizer: &mut ClickRandomizer,
+) -> NonIntrusiveClickPosition {
+    NonIntrusiveClickPosition {
+        id: base_position.id,
+        x: base_position
+            .x
+            .saturating_add(randomizer.next_axis_offset(jitter.x_axis_px, jitter.mode)),
+        y: base_position
+            .y
+            .saturating_add(randomizer.next_axis_offset(jitter.y_axis_px, jitter.mode)),
+    }
+}
+
+fn dispatch_non_intrusive_mouse_click(
+    window_handle: HWND,
+    point: POINT,
+    mouse_button: MouseButton,
+    click_duration_range: Option<ClickDurationRange>,
+    randomizer: &mut ClickRandomizer,
+) -> Result<(), String> {
+    dispatch_non_intrusive_mouse_button_event(window_handle, point, WM_MOUSEMOVE, 0 as WPARAM)?;
+    dispatch_non_intrusive_mouse_button_event_for_state(window_handle, point, mouse_button, true)?;
+    if let Some(click_duration_range) = click_duration_range {
+        thread::sleep(randomizer.next_duration(click_duration_range));
+    }
+    dispatch_non_intrusive_mouse_button_event_for_state(window_handle, point, mouse_button, false)
+}
+
 fn click_window_nanos(click_rate_unit: ClickRateUnit) -> u64 {
     match click_rate_unit {
         ClickRateUnit::Ms => 1_000_000,
@@ -437,6 +525,36 @@ fn dispatch_mouse_button_event(mouse_button: MouseButton, is_down: bool) -> Resu
     Ok(())
 }
 
+fn dispatch_non_intrusive_mouse_button_event_for_state(
+    window_handle: HWND,
+    point: POINT,
+    mouse_button: MouseButton,
+    is_down: bool,
+) -> Result<(), String> {
+    let (down_message, up_message, down_wparam, up_wparam) =
+        mouse_button_post_message(mouse_button);
+
+    dispatch_non_intrusive_mouse_button_event(
+        window_handle,
+        point,
+        if is_down { down_message } else { up_message },
+        if is_down { down_wparam } else { up_wparam },
+    )
+}
+
+fn dispatch_non_intrusive_mouse_button_event(
+    window_handle: HWND,
+    point: POINT,
+    message: u32,
+    wparam: WPARAM,
+) -> Result<(), String> {
+    if unsafe { PostMessageW(window_handle, message, wparam, mouse_point_lparam(point)) } == 0 {
+        return Err("Unable to post a background mouse message to the target window.".into());
+    }
+
+    Ok(())
+}
+
 fn mouse_button_input(mouse_button: MouseButton) -> (u32, u32, u32) {
     match mouse_button {
         MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, 0),
@@ -445,6 +563,32 @@ fn mouse_button_input(mouse_button: MouseButton) -> (u32, u32, u32) {
         MouseButton::Mouse4 => (MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, XBUTTON1_DATA),
         MouseButton::Mouse5 => (MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, XBUTTON2_DATA),
     }
+}
+
+fn mouse_button_post_message(mouse_button: MouseButton) -> (u32, u32, WPARAM, WPARAM) {
+    match mouse_button {
+        MouseButton::Left => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON_WPARAM, 0),
+        MouseButton::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON_WPARAM, 0),
+        MouseButton::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON_WPARAM, 0),
+        MouseButton::Mouse4 => (
+            WM_XBUTTONDOWN,
+            WM_XBUTTONUP,
+            MK_XBUTTON1_WPARAM | ((XBUTTON1_DATA as WPARAM) << 16),
+            (XBUTTON1_DATA << 16) as WPARAM,
+        ),
+        MouseButton::Mouse5 => (
+            WM_XBUTTONDOWN,
+            WM_XBUTTONUP,
+            MK_XBUTTON2_WPARAM | ((XBUTTON2_DATA as WPARAM) << 16),
+            (XBUTTON2_DATA << 16) as WPARAM,
+        ),
+    }
+}
+
+fn mouse_point_lparam(point: POINT) -> LPARAM {
+    let x = point.x.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16 as u32;
+    let y = point.y.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16 as u16 as u32;
+    ((y << 16) | x) as LPARAM
 }
 
 fn build_mouse_input(flags: u32, mouse_data: u32) -> INPUT {

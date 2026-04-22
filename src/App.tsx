@@ -37,7 +37,7 @@ import {
   buildOverlayVisualTheme,
   buildThemeCssVariables,
 } from "@/config/theme";
-import { configureAutoClicker } from "@/lib/auto-clicker";
+import { configureAutoClicker, getAutoClickerStatus } from "@/lib/auto-clicker";
 import {
   CLICK_POSITION_OVERLAY_MOVE_EVENT,
   CLICK_POSITION_OVERLAY_REGION_CANCEL_EVENT,
@@ -83,6 +83,7 @@ const NON_SIMPLE_MIN_WINDOW_HEIGHT = 248;
 const SIMPLE_MIN_WINDOW_HEIGHT = 200;
 const SIMPLE_MIN_WINDOW_WIDTH = 560;
 const ACTIVE_TAB_STORAGE_KEY = "crystalline-auto-clicker.active-tab";
+const AUTO_CLICKER_STATUS_POLL_MS = 80;
 
 type AppTab = "advanced" | "settings" | "simple";
 
@@ -233,6 +234,7 @@ export default function App() {
   const [processListError, setProcessListError] = useState<string | null>(null);
   const [simpleViewWidth, setSimpleViewWidth] = useState(0);
   const [simpleViewHeight, setSimpleViewHeight] = useState(0);
+  const [isAutoClickerRunning, setIsAutoClickerRunning] = useState(false);
   const [isMainWindowReady, setIsMainWindowReady] = useState(false);
   const [edgeStopThemePreviewActive, setEdgeStopThemePreviewActive] =
     useState(false);
@@ -266,6 +268,7 @@ export default function App() {
 
       return {
         ...current,
+        clickPositionEnabled: true,
         clickPositions: [
           ...current.clickPositions,
           {
@@ -310,8 +313,7 @@ export default function App() {
 
       return {
         ...current,
-        clickPositionEnabled:
-          nextPositions.length > 0 ? current.clickPositionEnabled : false,
+        clickPositionEnabled: nextPositions.length > 0,
         clickPositions: nextPositions,
       };
     });
@@ -402,6 +404,43 @@ export default function App() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let pollTimeoutId: number | null = null;
+
+    async function pollAutoClickerStatus() {
+      try {
+        const status = await getAutoClickerStatus();
+        if (!cancelled) {
+          setIsAutoClickerRunning(status.clickerActive);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Unable to read auto clicker status", error);
+        }
+      } finally {
+        if (!cancelled) {
+          pollTimeoutId = window.setTimeout(() => {
+            void pollAutoClickerStatus();
+          }, AUTO_CLICKER_STATUS_POLL_MS);
+        }
+      }
+    }
+
+    void pollAutoClickerStatus();
+
+    return () => {
+      cancelled = true;
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId);
+      }
     };
   }, []);
 
@@ -678,6 +717,8 @@ export default function App() {
     const overlayEdgeStop = edgeStopThemePreviewActive
       ? buildEdgeStopPreviewOverlayConfig(settings)
       : buildEdgeStopOverlayConfig(settings);
+    const clickPositionPlaybackActive =
+      settings.mouseAction === "click" && settings.clickPositions.length > 0;
     const clickPositionOverlayVisible =
       settings.clickPositionDotsVisible &&
       settings.clickPositions.length > 0 &&
@@ -700,6 +741,9 @@ export default function App() {
       edgeStop: overlayEdgeStop,
       editable: clickRegionEditable,
       positions: settings.clickPositions,
+      positionsInteractive:
+        settings.clickPositions.length > 0 &&
+        !(clickPositionPlaybackActive && isAutoClickerRunning),
       theme: overlayVisualTheme,
       visible:
         clickPositionOverlayVisible ||
@@ -716,6 +760,7 @@ export default function App() {
     overlayVisualTheme,
     focusedProcessName,
     hasLoadedSettings,
+    isAutoClickerRunning,
     settings,
   ]);
 
@@ -761,6 +806,93 @@ export default function App() {
       dispose?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasLoadedSettings) {
+      return undefined;
+    }
+
+    const shouldEnableClickPositions = settings.clickPositions.length > 0;
+    if (settings.clickPositionEnabled === shouldEnableClickPositions) {
+      return undefined;
+    }
+
+    setSettings((current) => {
+      const currentShouldEnableClickPositions =
+        current.clickPositions.length > 0;
+
+      if (current.clickPositionEnabled === currentShouldEnableClickPositions) {
+        return current;
+      }
+
+      return {
+        ...current,
+        clickPositionEnabled: currentShouldEnableClickPositions,
+      };
+    });
+
+    return undefined;
+  }, [
+    hasLoadedSettings,
+    setSettings,
+    settings.clickPositionEnabled,
+    settings.clickPositions.length,
+  ]);
+
+  useEffect(() => {
+    if (!hasLoadedSettings) {
+      return undefined;
+    }
+
+    const hasLegacyNonIntrusiveState =
+      settings.clickPositionNonIntrusivePositions.length > 0 ||
+      settings.clickPositionNonIntrusiveSourcePositions.length > 0 ||
+      settings.clickPositionNonIntrusiveTarget !== null;
+    const shouldDisableNonIntrusiveMode =
+      settings.mouseAction !== "click" || settings.clickPositions.length === 0;
+
+    if (!shouldDisableNonIntrusiveMode && !hasLegacyNonIntrusiveState) {
+      return undefined;
+    }
+
+    setSettings((current) => {
+      const currentHasLegacyNonIntrusiveState =
+        current.clickPositionNonIntrusivePositions.length > 0 ||
+        current.clickPositionNonIntrusiveSourcePositions.length > 0 ||
+        current.clickPositionNonIntrusiveTarget !== null;
+      const currentShouldDisableNonIntrusiveMode =
+        current.mouseAction !== "click" ||
+        current.clickPositions.length === 0;
+
+      if (
+        !currentShouldDisableNonIntrusiveMode &&
+        !currentHasLegacyNonIntrusiveState
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        clickPositionNonIntrusiveEnabled: currentShouldDisableNonIntrusiveMode
+          ? false
+          : current.clickPositionNonIntrusiveEnabled,
+        clickPositionNonIntrusivePositions: [],
+        clickPositionNonIntrusiveSourcePositions: [],
+        clickPositionNonIntrusiveTarget: null,
+      };
+    });
+
+    return undefined;
+  }, [
+    hasLoadedSettings,
+    setSettings,
+    settings.clickPositionNonIntrusiveEnabled,
+    settings.clickPositionNonIntrusivePositions,
+    settings.clickPositionNonIntrusiveSourcePositions,
+    settings.clickPositionNonIntrusiveTarget,
+    settings.clickPositions,
+    settings.mouseAction,
+  ]);
 
   useEffect(() => {
     if (!hasLoadedSettings) {

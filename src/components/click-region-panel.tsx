@@ -3,7 +3,6 @@ import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency";
 import { DisabledReasonOverlay } from "@/components/disabled-reason-overlay";
 import type { AutoClickerSettings } from "@/config/settings";
-import { isClickRegionValid } from "@/lib/click-region";
 import {
   ToggleGroup,
   ToggleGroupItem,
@@ -21,7 +20,7 @@ function DescriptionTooltip({
   description: string;
 }) {
   return (
-    <div className="group/tooltip relative">
+    <div className="group/tooltip relative w-full">
       {children}
       <div className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 w-max max-w-[20rem] -translate-x-1/2 opacity-0 transition-[opacity,transform] duration-120 group-hover/tooltip:opacity-100">
         <div className="ui-themed-tooltip rounded-md border px-3 py-1.5 text-xs backdrop-blur-sm">
@@ -53,12 +52,7 @@ export function ClickRegionPanel({
   setSettings,
 }: ClickRegionPanelProps) {
   const isClickRegionAvailable = settings.mouseAction === "click";
-  const region = isClickRegionValid(settings.clickRegion)
-    ? settings.clickRegion
-    : null;
-  const hasRegion = region !== null;
   const isClickRegionActive = isClickRegionAvailable && settings.clickRegionEnabled;
-  const regionLabel = region ? `${region.width} x ${region.height}` : "No region";
   const unavailableReason = !isClickRegionAvailable
     ? "Disabled due to Action: Hold"
     : null;
@@ -66,36 +60,25 @@ export function ClickRegionPanel({
   const rowContent = (
     <div
       className={cn(
-        "flex min-h-[5.5rem] w-full min-w-0 items-center justify-between gap-3 rounded-xl border px-3 py-2 transition-colors",
+        "flex min-h-[5.5rem] w-full min-w-0 flex-wrap items-center gap-3 rounded-xl border px-3 py-2 transition-colors",
         isClickRegionActive
           ? "border-border/70 bg-card/35"
           : "border-border/60 bg-background/20 hover:bg-background/28",
       )}
     >
-      <div className="min-w-0 shrink-0 pr-2">
+      <div className="min-w-0 grow pr-2">
         <p className="text-base font-semibold text-foreground">Click Region</p>
       </div>
 
-      <div className="relative ml-auto grid w-full max-w-[21rem] min-w-0 grid-cols-[minmax(0,1fr)_5.5rem_4.75rem_auto] items-center gap-2">
-        <div
-          className={cn(
-            "flex h-8 min-w-0 items-center justify-center rounded-lg border px-3 text-[11px] font-semibold uppercase tracking-[0.14em] tabular-nums",
-            hasRegion
-              ? "border-border/70 bg-background/55 text-muted-foreground"
-              : "border-border/60 bg-background/30 text-muted-foreground/75",
-          )}
-        >
-          <span className="truncate">{regionLabel}</span>
-        </div>
-
+      <div className="relative ml-auto flex shrink-0 items-center gap-2">
         {isEditing ? (
-          <div className="flex h-8 items-center justify-center rounded-lg border border-border/70 bg-background/55 px-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
+          <div className="flex h-8 w-[5.5rem] items-center justify-center rounded-lg border border-border/70 bg-background/55 px-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">
             Editing
           </div>
         ) : (
           <button
             className={cn(
-              "flex h-8 w-full items-center justify-center rounded-lg border px-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-0",
+              "flex h-8 w-[5.5rem] items-center justify-center rounded-lg border px-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-0",
               isClickRegionAvailable
                 ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
                 : "cursor-not-allowed border-border/55 bg-background/30 text-muted-foreground/65",
@@ -117,7 +100,7 @@ export function ClickRegionPanel({
 
         <button
           className={cn(
-            "flex h-8 w-full items-center justify-center rounded-lg border px-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-0",
+            "flex h-8 w-[4.75rem] items-center justify-center rounded-lg border px-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-0",
             isClickRegionAvailable
               ? "border-border/70 bg-background/60 text-foreground hover:bg-background/85"
               : "cursor-not-allowed border-border/55 bg-background/30 text-muted-foreground/65",
@@ -137,7 +120,7 @@ export function ClickRegionPanel({
         </button>
 
         <ToggleGroup
-          className="justify-self-end overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+          className="shrink-0 overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
           onValueChange={(value) => {
             if (!value) {
               return;

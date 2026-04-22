@@ -83,6 +83,14 @@ pub struct ClickPositionPoint {
     pub y: i32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClickPositionNonIntrusiveTarget {
+    pub process_name: String,
+    pub title: String,
+    pub class_name: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EdgeStopFeedback {
@@ -107,6 +115,9 @@ pub struct AutoClickerCommandConfig {
     pub mouse_action: MouseAction,
     pub click_position_enabled: bool,
     pub click_positions: Vec<ClickPositionPoint>,
+    pub click_position_non_intrusive_enabled: bool,
+    pub click_position_non_intrusive_positions: Vec<ClickPositionPoint>,
+    pub click_position_non_intrusive_target: Option<ClickPositionNonIntrusiveTarget>,
     pub click_region_enabled: bool,
     pub click_region: Option<OverlayRect>,
     pub jitter_enabled: bool,
@@ -160,6 +171,9 @@ impl Default for AutoClickerCommandConfig {
             mouse_action: MouseAction::Click,
             click_position_enabled: false,
             click_positions: Vec::new(),
+            click_position_non_intrusive_enabled: false,
+            click_position_non_intrusive_positions: Vec::new(),
+            click_position_non_intrusive_target: None,
             click_region_enabled: false,
             click_region: None,
             jitter_enabled: false,

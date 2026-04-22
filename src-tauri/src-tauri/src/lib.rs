@@ -28,11 +28,19 @@ use windows_sys::Win32::{
 mod auto_clicker;
 #[path = "../../../src/native/edge_stop.rs"]
 mod edge_stop;
+#[path = "../../../src/native/non_intrusive_clicks.rs"]
+mod non_intrusive_clicks;
 #[path = "../../../src/native/process_filters.rs"]
 mod process_filters;
 
 use auto_clicker::{AutoClickerCommandConfig, AutoClickerController, AutoClickerStatus};
 use edge_stop::{edge_stop_runtime, EdgeStopWidths, OverlayRect};
+#[cfg(target_os = "windows")]
+use non_intrusive_clicks::{
+    map_click_positions_to_non_intrusive_positions as resolve_map_click_positions_to_non_intrusive_positions,
+    pick_non_intrusive_target_from_click as resolve_pick_non_intrusive_target_from_click,
+    NonIntrusiveClickPosition, NonIntrusiveTargetWindow,
+};
 use process_filters::{
     foreground_process_name as resolve_foreground_process_name,
     list_open_app_processes as resolve_open_app_processes, OpenAppProcess,
@@ -118,6 +126,14 @@ struct PersistedClickRegion {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PersistedClickPositionNonIntrusiveTarget {
+    process_name: Option<String>,
+    title: Option<String>,
+    class_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedThemeColors {
     background: Option<String>,
     panel: Option<String>,
@@ -149,6 +165,9 @@ struct PersistedAutoClickerSettings {
     click_position_dots_visible: Option<bool>,
     click_position_hotkey: Option<PersistedHotkey>,
     click_positions: Option<Vec<PersistedClickPosition>>,
+    click_position_non_intrusive_enabled: Option<bool>,
+    click_position_non_intrusive_positions: Option<Vec<PersistedClickPosition>>,
+    click_position_non_intrusive_target: Option<PersistedClickPositionNonIntrusiveTarget>,
     click_region_enabled: Option<bool>,
     click_region: Option<PersistedClickRegion>,
     double_click_enabled: Option<bool>,
@@ -233,11 +252,27 @@ struct ClickPositionPointDto {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ClickPositionNonIntrusiveTargetDto {
+    process_name: String,
+    title: String,
+    class_name: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PickClickPositionNonIntrusiveTargetResponse {
+    positions: Vec<ClickPositionPointDto>,
+    target: ClickPositionNonIntrusiveTargetDto,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ClickPositionOverlayRequest {
     click_region: Option<OverlayRect>,
     edge_stop: EdgeStopOverlayRequest,
     editable: bool,
     positions: Vec<ClickPositionPointDto>,
+    positions_interactive: bool,
     theme: OverlayVisualTheme,
     visible: bool,
 }
@@ -300,6 +335,7 @@ struct ClickPositionOverlayState {
     origin_x: i32,
     origin_y: i32,
     positions: Vec<ClickPositionPointDto>,
+    positions_interactive: bool,
     process_picker: ProcessPickerOverlayState,
     theme: OverlayVisualTheme,
     visible: bool,
@@ -686,10 +722,61 @@ fn click_position_overlay_state(
         origin_x,
         origin_y,
         positions: overlay.positions,
+        positions_interactive: overlay.positions_interactive,
         process_picker,
         theme: overlay.theme,
         visible: overlay.visible,
         width,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn dto_positions_to_non_intrusive_positions(
+    positions: &[ClickPositionPointDto],
+) -> Vec<NonIntrusiveClickPosition> {
+    positions
+        .iter()
+        .map(|position| NonIntrusiveClickPosition {
+            id: position.id,
+            x: position.x,
+            y: position.y,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn non_intrusive_positions_to_dto(
+    positions: Vec<NonIntrusiveClickPosition>,
+) -> Vec<ClickPositionPointDto> {
+    positions
+        .into_iter()
+        .map(|position| ClickPositionPointDto {
+            id: position.id,
+            x: position.x,
+            y: position.y,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn dto_target_to_non_intrusive_target(
+    target: &ClickPositionNonIntrusiveTargetDto,
+) -> NonIntrusiveTargetWindow {
+    NonIntrusiveTargetWindow {
+        class_name: target.class_name.clone(),
+        process_name: target.process_name.clone(),
+        title: target.title.clone(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn non_intrusive_target_to_dto(
+    target: NonIntrusiveTargetWindow,
+) -> ClickPositionNonIntrusiveTargetDto {
+    ClickPositionNonIntrusiveTargetDto {
+        class_name: target.class_name,
+        process_name: target.process_name,
+        title: target.title,
     }
 }
 
@@ -935,6 +1022,117 @@ fn pick_process_name_from_click(
 #[tauri::command]
 fn pick_process_name_from_click() -> Result<Option<String>, String> {
     Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn pick_click_position_non_intrusive_target_from_click(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    positions: Vec<ClickPositionPointDto>,
+) -> Result<Option<PickClickPositionNonIntrusiveTargetResponse>, String> {
+    if positions.is_empty() {
+        return Err("Add at least one click position before enabling non-intrusive mode.".into());
+    }
+
+    let window = main_window(&app)?;
+    window.hide().map_err(|error| {
+        format!("Unable to hide main window for non-intrusive target capture: {error}")
+    })?;
+
+    thread::sleep(Duration::from_millis(120));
+
+    let mut overlay_state = stored_click_position_overlay_state(state.inner())?;
+    overlay_state.process_picker.active = true;
+    overlay_state.process_picker.label = None;
+
+    let mut cursor = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut cursor) } != 0 {
+        overlay_state.process_picker.cursor_x = cursor.x;
+        overlay_state.process_picker.cursor_y = cursor.y;
+    }
+
+    let selection = (|| {
+        sync_click_position_overlay_state(&app, state.inner(), overlay_state.clone())?;
+
+        resolve_pick_non_intrusive_target_from_click(
+            |cursor, label| {
+                let next_label = label
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned);
+
+                if overlay_state.process_picker.cursor_x == cursor.x
+                    && overlay_state.process_picker.cursor_y == cursor.y
+                    && overlay_state.process_picker.label.as_deref() == next_label.as_deref()
+                {
+                    return Ok(());
+                }
+
+                overlay_state.process_picker.active = true;
+                overlay_state.process_picker.cursor_x = cursor.x;
+                overlay_state.process_picker.cursor_y = cursor.y;
+                overlay_state.process_picker.label = next_label;
+
+                sync_click_position_overlay_state(&app, state.inner(), overlay_state.clone())
+            },
+            &dto_positions_to_non_intrusive_positions(&positions),
+        )
+    })();
+
+    overlay_state.process_picker = ProcessPickerOverlayState::default();
+    if let Err(error) = sync_click_position_overlay_state(&app, state.inner(), overlay_state) {
+        log::warn!("unable to clear non-intrusive target picker overlay: {error}");
+    }
+
+    let restore_result = window.show().map_err(|error| {
+        format!("Unable to restore main window after non-intrusive target capture: {error}")
+    });
+    if let Err(error) = window.set_focus() {
+        log::warn!("unable to focus main window after non-intrusive target capture: {error}");
+    }
+
+    match (selection, restore_result) {
+        (Ok(Some(selection)), Ok(())) => Ok(Some(PickClickPositionNonIntrusiveTargetResponse {
+            positions: non_intrusive_positions_to_dto(selection.positions),
+            target: non_intrusive_target_to_dto(selection.target),
+        })),
+        (Ok(None), Ok(())) => Ok(None),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn pick_click_position_non_intrusive_target_from_click(
+    positions: Vec<ClickPositionPointDto>,
+) -> Result<Option<PickClickPositionNonIntrusiveTargetResponse>, String> {
+    let _ = positions;
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn map_click_positions_to_non_intrusive_positions(
+    target: ClickPositionNonIntrusiveTargetDto,
+    positions: Vec<ClickPositionPointDto>,
+) -> Result<Vec<ClickPositionPointDto>, String> {
+    let mapped_positions = resolve_map_click_positions_to_non_intrusive_positions(
+        &dto_target_to_non_intrusive_target(&target),
+        &dto_positions_to_non_intrusive_positions(&positions),
+    )?;
+
+    Ok(non_intrusive_positions_to_dto(mapped_positions))
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn map_click_positions_to_non_intrusive_positions(
+    _target: ClickPositionNonIntrusiveTargetDto,
+    _positions: Vec<ClickPositionPointDto>,
+) -> Result<Vec<ClickPositionPointDto>, String> {
+    Ok(Vec::new())
 }
 
 #[tauri::command]
@@ -1402,6 +1600,8 @@ pub fn run() {
             get_current_cursor_position,
             list_running_process_names,
             pick_process_name_from_click,
+            pick_click_position_non_intrusive_target_from_click,
+            map_click_positions_to_non_intrusive_positions,
             sync_click_position_overlay,
             notify_webview_ready,
             set_click_position_overlay_interactive,

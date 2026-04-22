@@ -6,7 +6,11 @@ import {
   type SetStateAction,
 } from "react";
 
-import { MinusIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  MinusIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import type { DisabledDependencyTarget } from "@/components/disabled-feature-dependency";
 import type { AutoClickerSettings } from "@/config/settings";
@@ -22,6 +26,12 @@ const CLICK_POSITION_HOTKEY_DESCRIPTION =
 const CLEAR_DOTS_DESCRIPTION = "Deletes every dot currently on the screen.";
 export const CLICK_POSITION_DESCRIPTION =
   "Lets you place dots and replay clicks at those saved positions in order.";
+const CLICK_POSITION_MODE_DESCRIPTIONS = {
+  standard:
+    "Moves your cursor to each saved dot before clicking.\nBest for replaying clicks across multiple screen positions, but it takes control of your cursor while running.",
+  "non-intrusive":
+    "Sends clicks to the locked target window without pulling your cursor away, so you can keep using your mouse.\nThis mode does not work while that target window is minimized.",
+} as const;
 
 export function ClickPositionDescriptionTooltip({
   children,
@@ -69,6 +79,42 @@ function ClearDotsTooltip({ children }: { children: ReactNode }) {
   );
 }
 
+function ClickPositionModeToggleItem({
+  ariaLabel,
+  children,
+  className,
+  description,
+  disabled,
+  value,
+}: {
+  ariaLabel: string;
+  children: ReactNode;
+  className?: string;
+  description: string;
+  disabled?: boolean;
+  value: "standard" | "non-intrusive";
+}) {
+  return (
+    <ToggleGroupItem
+      aria-label={ariaLabel}
+      className={cn(
+        "group/click-position-mode-item relative",
+        className,
+      )}
+      disabled={disabled}
+      value={value}
+    >
+      <span>{children}</span>
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-64 max-w-[min(20rem,calc(100vw-1.5rem))] -translate-x-1/2 opacity-0 transition-[opacity,transform] duration-120 group-hover/click-position-mode-item:opacity-100">
+        <div className="ui-themed-tooltip rounded-md border px-3 py-1.5 text-left text-xs whitespace-pre-line normal-case tracking-normal backdrop-blur-sm">
+          {description}
+        </div>
+        <div className="ui-themed-tooltip-arrow absolute top-full left-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-[5px] rotate-45 border-r border-b" />
+      </div>
+    </ToggleGroupItem>
+  );
+}
+
 type ClickPositionPanelProps = {
   onAddCenteredDot: () => void;
   onClearDots: () => void;
@@ -99,10 +145,14 @@ function ClickPositionControls({
   const [isCapturingHotkey, setIsCapturingHotkey] = useState(false);
 
   const isClickPositionActive =
-    settings.mouseAction === "click" && settings.clickPositionEnabled;
+    settings.mouseAction === "click" && settings.clickPositions.length > 0;
   const dotCount = settings.clickPositions.length;
   const dotLabel = `${dotCount} dot${dotCount === 1 ? "" : "s"}`;
   const isClickPositionHotkeyUnbound = settings.clickPositionHotkey.code === "";
+  const isNonIntrusiveModeActive =
+    isClickPositionActive &&
+    settings.clickPositionNonIntrusiveEnabled &&
+    dotCount > 0;
   const isInline = variant === "inline";
   const iconButtonClassName =
     "flex h-8 w-8 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-0";
@@ -221,7 +271,7 @@ function ClickPositionControls({
     </>
   );
 
-  const hotkeyAndPlaybackControls = (
+  const hotkeyControls = (
     <>
       <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         Hotkey
@@ -248,43 +298,59 @@ function ClickPositionControls({
               : settings.clickPositionHotkey.label}
         </button>
       </HotkeyTooltip>
+    </>
+  );
+
+  const nonIntrusiveModeControls = (
+    <>
+      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        Mode
+      </span>
 
       <ToggleGroup
-        className="ml-auto overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+        className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
         onValueChange={(value) => {
           if (!value) {
             return;
           }
 
-          if (value === "on" && settings.mouseAction !== "click") {
+          if (value === "non-intrusive" && settings.mouseAction !== "click") {
             onUnavailablePress?.("mouse-action-hold");
+            return;
+          }
+
+          if (value === "non-intrusive" && dotCount === 0) {
             return;
           }
 
           setSettings((current) => ({
             ...current,
-            clickPositionEnabled: value === "on",
+            clickPositionNonIntrusiveEnabled: value === "non-intrusive",
           }));
         }}
         size="sm"
         type="single"
-        value={isClickPositionActive ? "on" : "off"}
+        value={isNonIntrusiveModeActive ? "non-intrusive" : "standard"}
         variant="default"
       >
-        <ToggleGroupItem
-          aria-label="Turn click position playback off"
-          className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
-          value="off"
+        <ClickPositionModeToggleItem
+          ariaLabel="Use standard click-position playback"
+          className="px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+          description={CLICK_POSITION_MODE_DESCRIPTIONS.standard}
+          disabled={!isClickPositionActive}
+          value="standard"
         >
-          Off
-        </ToggleGroupItem>
-        <ToggleGroupItem
-          aria-label="Turn click position playback on"
-          className="h-7 px-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground data-[state=on]:bg-muted-foreground/15 data-[state=on]:text-foreground focus-visible:ring-0"
-          value="on"
+          Standard
+        </ClickPositionModeToggleItem>
+        <ClickPositionModeToggleItem
+          ariaLabel="Use non-intrusive click-position playback"
+          className="px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
+          description={CLICK_POSITION_MODE_DESCRIPTIONS["non-intrusive"]}
+          disabled={!isClickPositionActive || dotCount === 0}
+          value="non-intrusive"
         >
-          On
-        </ToggleGroupItem>
+          Non-Intrusive
+        </ClickPositionModeToggleItem>
       </ToggleGroup>
     </>
   );
@@ -303,7 +369,11 @@ function ClickPositionControls({
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {hotkeyAndPlaybackControls}
+          {hotkeyControls}
+        </div>
+
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {nonIntrusiveModeControls}
         </div>
       </div>
     );
@@ -323,7 +393,11 @@ function ClickPositionControls({
       </div>
 
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {hotkeyAndPlaybackControls}
+        {hotkeyControls}
+      </div>
+
+      <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-2">
+        {nonIntrusiveModeControls}
       </div>
     </div>
   );

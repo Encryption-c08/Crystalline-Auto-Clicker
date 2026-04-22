@@ -2,6 +2,7 @@ import type {
   AutoClickerSettings,
   ClickRegion,
   ClickPosition,
+  ClickPositionNonIntrusiveTarget,
   ClickEngine,
   ClickMode,
   ClickRateMode,
@@ -65,6 +66,9 @@ export type AutoClickerCommandConfig = {
   mouseAction: MouseActionOption;
   clickPositionEnabled: boolean;
   clickPositions: ClickPosition[];
+  clickPositionNonIntrusiveEnabled: boolean;
+  clickPositionNonIntrusivePositions: ClickPosition[];
+  clickPositionNonIntrusiveTarget: ClickPositionNonIntrusiveTarget | null;
   clickRegionEnabled: boolean;
   clickRegion: ClickRegion | null;
   jitterEnabled: boolean;
@@ -522,8 +526,12 @@ export function buildAutoClickerConfig(
     ),
     mouseButton: settings.mouseButton,
     mouseAction: settings.mouseAction,
-    clickPositionEnabled: settings.clickPositionEnabled,
+    clickPositionEnabled: settings.clickPositions.length > 0,
     clickPositions: settings.clickPositions,
+    clickPositionNonIntrusiveEnabled: settings.clickPositionNonIntrusiveEnabled,
+    clickPositionNonIntrusivePositions:
+      settings.clickPositionNonIntrusivePositions,
+    clickPositionNonIntrusiveTarget: settings.clickPositionNonIntrusiveTarget,
     clickRegionEnabled: settings.clickRegionEnabled,
     clickRegion: settings.clickRegion,
     jitterEnabled: settings.jitterEnabled,

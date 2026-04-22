@@ -45,6 +45,12 @@ export type ClickRegion = {
   height: number;
 };
 
+export type ClickPositionNonIntrusiveTarget = {
+  processName: string;
+  title: string;
+  className: string;
+};
+
 export type AutoClickerSettings = {
   theme: AppTheme;
   themePreset: ThemePresetId;
@@ -67,6 +73,10 @@ export type AutoClickerSettings = {
   clickPositionDotsVisible: boolean;
   clickPositionHotkey: Hotkey;
   clickPositions: ClickPosition[];
+  clickPositionNonIntrusiveEnabled: boolean;
+  clickPositionNonIntrusivePositions: ClickPosition[];
+  clickPositionNonIntrusiveSourcePositions: ClickPosition[];
+  clickPositionNonIntrusiveTarget: ClickPositionNonIntrusiveTarget | null;
   clickRegionEnabled: boolean;
   clickRegion: ClickRegion | null;
   jitterEnabled: boolean;
@@ -109,6 +119,12 @@ export type SavedClickRegion = {
   height?: number | null;
 };
 
+export type SavedClickPositionNonIntrusiveTarget = {
+  processName?: string | null;
+  title?: string | null;
+  className?: string | null;
+};
+
 export type SavedAutoClickerSettings = {
   theme?: string | null;
   themePreset?: string | null;
@@ -131,6 +147,10 @@ export type SavedAutoClickerSettings = {
   clickPositionDotsVisible?: boolean | null;
   clickPositionHotkey?: SavedHotkey | null;
   clickPositions?: SavedClickPosition[] | null;
+  clickPositionNonIntrusiveEnabled?: boolean | null;
+  clickPositionNonIntrusivePositions?: SavedClickPosition[] | null;
+  clickPositionNonIntrusiveSourcePositions?: SavedClickPosition[] | null;
+  clickPositionNonIntrusiveTarget?: SavedClickPositionNonIntrusiveTarget | null;
   clickRegionEnabled?: boolean | null;
   clickRegion?: SavedClickRegion | null;
   jitterEnabled?: boolean | null;
@@ -230,6 +250,10 @@ export const defaultAutoClickerSettings: AutoClickerSettings = {
   clickPositionDotsVisible: true,
   clickPositionHotkey: { ...UNBOUND_HOTKEY },
   clickPositions: [],
+  clickPositionNonIntrusiveEnabled: false,
+  clickPositionNonIntrusivePositions: [],
+  clickPositionNonIntrusiveSourcePositions: [],
+  clickPositionNonIntrusiveTarget: null,
   clickRegionEnabled: false,
   clickRegion: null,
   jitterEnabled: false,
@@ -343,6 +367,26 @@ function normalizeClickRegion(
     y,
     width,
     height,
+  };
+}
+
+function normalizeClickPositionNonIntrusiveTarget(
+  target: SavedClickPositionNonIntrusiveTarget | null | undefined,
+): ClickPositionNonIntrusiveTarget | null {
+  const processName = normalizeProcessRuleName(target?.processName);
+  const title =
+    typeof target?.title === "string" ? target.title.trim() : "";
+  const className =
+    typeof target?.className === "string" ? target.className.trim() : "";
+
+  if (!processName || title === "" || className === "") {
+    return null;
+  }
+
+  return {
+    processName,
+    title,
+    className,
   };
 }
 
@@ -499,6 +543,15 @@ export function normalizeAutoClickerSettings(
   const normalizedClickPositions = normalizeClickPositions(
     settings?.clickPositions,
   );
+  const normalizedClickPositionNonIntrusivePositions = normalizeClickPositions(
+    settings?.clickPositionNonIntrusivePositions,
+  );
+  const normalizedClickPositionNonIntrusiveSourcePositions =
+    normalizeClickPositions(settings?.clickPositionNonIntrusiveSourcePositions);
+  const normalizedClickPositionNonIntrusiveTarget =
+    normalizeClickPositionNonIntrusiveTarget(
+      settings?.clickPositionNonIntrusiveTarget,
+    );
   const normalizedClickRegion = normalizeClickRegion(settings?.clickRegion);
   const processWhitelistEnabled =
     typeof settings?.processWhitelistEnabled === "boolean"
@@ -587,6 +640,15 @@ export function normalizeAutoClickerSettings(
         : defaultAutoClickerSettings.clickPositionHotkey,
     ),
     clickPositions: normalizedClickPositions,
+    clickPositionNonIntrusiveEnabled:
+      typeof settings?.clickPositionNonIntrusiveEnabled === "boolean"
+        ? settings.clickPositionNonIntrusiveEnabled
+        : defaultAutoClickerSettings.clickPositionNonIntrusiveEnabled,
+    clickPositionNonIntrusivePositions:
+      normalizedClickPositionNonIntrusivePositions,
+    clickPositionNonIntrusiveSourcePositions:
+      normalizedClickPositionNonIntrusiveSourcePositions,
+    clickPositionNonIntrusiveTarget: normalizedClickPositionNonIntrusiveTarget,
     clickRegionEnabled:
       typeof settings?.clickRegionEnabled === "boolean"
         ? settings.clickRegionEnabled

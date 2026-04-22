@@ -31,16 +31,20 @@ pub(crate) use hotkeys::read_pressed_keyboard_hotkey;
 
 #[cfg(target_os = "windows")]
 use clicker_calc::{
-    click_cadence_from_config, current_cursor_position, dispatch_mouse_clicks, next_cadence_interval,
-    next_throughput_worker_sleep, next_worker_sleep, press_mouse_button, release_mouse_button,
-    wait_until_precise, ClickDurationRange, ClickRandomizer, CursorJitterConfig,
-    DispatchMouseClicksOutcome,
+    click_cadence_from_config, current_cursor_position, dispatch_mouse_clicks,
+    dispatch_non_intrusive_mouse_clicks, next_cadence_interval, next_throughput_worker_sleep,
+    next_worker_sleep, press_mouse_button, release_mouse_button, wait_until_precise,
+    ClickDurationRange, ClickRandomizer, CursorJitterConfig, DispatchMouseClicksOutcome,
 };
 #[cfg(target_os = "windows")]
 pub(crate) use hotkeys::read_hotkey_state;
 #[cfg(target_os = "windows")]
 use crate::process_filters::{
     foreground_process_id, is_process_allowed, normalize_process_name_list, process_name_by_id,
+};
+#[cfg(target_os = "windows")]
+use crate::non_intrusive_clicks::{
+    process_name_for_non_intrusive_position, NonIntrusiveClickPosition,
 };
 #[cfg(target_os = "windows")]
 use crate::edge_stop::{
@@ -414,10 +418,29 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                 .as_ref()
                 .map(|active| *active)
                 .unwrap_or(false);
+            let active_non_intrusive_process_name_result = if paused_for_app_window
+                || !process_filters_active_from_config(&config)
+                || !click_position_non_intrusive_active_from_config(&config)
+            {
+                Ok(None)
+            } else {
+                active_non_intrusive_process_name_from_config(&config)
+            };
             let process_filter_result = if paused_for_app_window
                 || !process_filters_active_from_config(&config)
             {
                 Ok(true)
+            } else if click_position_non_intrusive_active_from_config(&config) {
+                active_non_intrusive_process_name_result.as_ref().map_or_else(
+                    |error| Err(error.clone()),
+                    |process_name| {
+                        Ok(is_process_allowed(
+                            process_name.as_deref(),
+                            &config.process_whitelist,
+                            &config.process_blacklist,
+                        ))
+                    },
+                )
             } else {
                 process_filters_allow_foreground_process(
                     &config,
@@ -540,7 +563,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         None
                                     } else {
                                         let jitter_anchor_for_dispatch_result = if jitter_range.is_some()
-                                            && !click_positions_active_from_config(&config)
+                                            && !click_position_sequence_active_from_config(&config)
                                         {
                                             if jitter_anchor_position.is_none() {
                                                 match current_cursor_position() {
@@ -558,7 +581,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                         };
                                         match jitter_anchor_for_dispatch_result {
                                             Ok(jitter_anchor_for_dispatch) => {
-                                                let result = if click_positions_active_from_config(&config)
+                                                let result = if click_position_sequence_active_from_config(&config)
                                                 {
                                                     let mut executed_click_count = 0_usize;
                                                     let mut dispatch_error = None;
@@ -578,18 +601,35 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                             &config,
                                                             &mut next_click_position_index,
                                                         ) {
-                                                            match dispatch_mouse_clicks(
-                                                                config.mouse_button,
-                                                                cycle_click_count,
-                                                                clicks_per_cycle,
-                                                                double_click_delay,
-                                                                click_duration_range,
-                                                                jitter_range,
-                                                                Some(position),
-                                                                active_click_region,
-                                                                active_edge_stop,
-                                                                &mut click_randomizer,
-                                                            ) {
+                                                            let dispatch_result =
+                                                                if click_position_non_intrusive_active_from_config(&config) {
+                                                                    dispatch_non_intrusive_mouse_clicks(
+                                                                        config.mouse_button,
+                                                                        cycle_click_count,
+                                                                        clicks_per_cycle,
+                                                                        double_click_delay,
+                                                                        click_duration_range,
+                                                                        jitter_range,
+                                                                        non_intrusive_click_position(position),
+                                                                        &mut click_randomizer,
+                                                                    )
+                                                                    .map(DispatchMouseClicksOutcome::Completed)
+                                                                } else {
+                                                                    dispatch_mouse_clicks(
+                                                                        config.mouse_button,
+                                                                        cycle_click_count,
+                                                                        clicks_per_cycle,
+                                                                        double_click_delay,
+                                                                        click_duration_range,
+                                                                        jitter_range,
+                                                                        Some(position),
+                                                                        active_click_region,
+                                                                        active_edge_stop,
+                                                                        &mut click_randomizer,
+                                                                    )
+                                                                };
+
+                                                            match dispatch_result {
                                                                 Ok(DispatchMouseClicksOutcome::Completed(
                                                                     dispatched_click_count,
                                                                 )) => {
@@ -685,7 +725,7 @@ fn spawn_auto_clicker_worker(shared: Arc<AutoClickerShared>) {
                                                         if let Some(remaining) =
                                                             remaining_click_limit.as_mut()
                                                         {
-                                                            if !click_positions_active_from_config(&config) {
+                                                            if !click_position_sequence_active_from_config(&config) {
                                                                 *remaining = remaining
                                                                     .saturating_sub(executed_click_count as u64);
                                                             }
@@ -907,6 +947,19 @@ fn validate_auto_clicker_config(config: &AutoClickerCommandConfig) -> Result<(),
         return Err("Click rate cannot be empty.".into());
     }
 
+    if config.click_position_non_intrusive_enabled && !config.click_position_enabled {
+        return Err("Turn Click Positions on before using non-intrusive mode.".into());
+    }
+
+    if config.click_position_non_intrusive_enabled && !matches!(config.mouse_action, MouseAction::Click)
+    {
+        return Err("Non-intrusive click positions only support Action: Click.".into());
+    }
+
+    if config.click_position_non_intrusive_enabled && config.click_positions.is_empty() {
+        return Err("Add at least one click position before enabling non-intrusive mode.".into());
+    }
+
     validate_hotkey_code(&config.hotkey_code)
         .map_err(|_| format!("Unsupported hotkey: {}", config.hotkey_label))?;
 
@@ -938,6 +991,8 @@ fn normalize_auto_clicker_config(
     config
         .process_blacklist
         .retain(|rule| !config.process_whitelist.iter().any(|item| item == rule));
+    config.click_position_non_intrusive_positions.clear();
+    config.click_position_non_intrusive_target = None;
     config.jitter_x = normalize_jitter_axis_value(&config.jitter_x, "Jitter X axis")?;
     config.jitter_y = normalize_jitter_axis_value(&config.jitter_y, "Jitter Y axis")?;
     if config.double_click_enabled && matches!(config.mouse_action, MouseAction::Click) {
@@ -1020,15 +1075,47 @@ fn process_filters_allow_foreground_process(
 }
 
 #[cfg(target_os = "windows")]
-fn click_positions_active_from_config(config: &AutoClickerCommandConfig) -> bool {
+fn click_position_non_intrusive_active_from_config(config: &AutoClickerCommandConfig) -> bool {
     config.click_position_enabled
+        && config.click_position_non_intrusive_enabled
         && matches!(config.mouse_action, MouseAction::Click)
         && !config.click_positions.is_empty()
 }
 
 #[cfg(target_os = "windows")]
+fn active_non_intrusive_process_name_from_config(
+    config: &AutoClickerCommandConfig,
+) -> Result<Option<String>, String> {
+    if !click_position_non_intrusive_active_from_config(config) {
+        return Ok(None);
+    }
+
+    let Some(position) = config.click_positions.first().copied() else {
+        return Ok(None);
+    };
+
+    process_name_for_non_intrusive_position(non_intrusive_click_position(position))
+}
+
+#[cfg(target_os = "windows")]
+fn click_positions_active_from_config(config: &AutoClickerCommandConfig) -> bool {
+    config.click_position_enabled
+        && matches!(config.mouse_action, MouseAction::Click)
+        && !click_position_non_intrusive_active_from_config(config)
+        && !config.click_positions.is_empty()
+}
+
+#[cfg(target_os = "windows")]
+fn click_position_sequence_active_from_config(config: &AutoClickerCommandConfig) -> bool {
+    click_position_non_intrusive_active_from_config(config) || click_positions_active_from_config(config)
+}
+
+#[cfg(target_os = "windows")]
 fn click_region_active_from_config(config: &AutoClickerCommandConfig) -> Option<OverlayRect> {
-    if !config.click_region_enabled || !matches!(config.mouse_action, MouseAction::Click) {
+    if !config.click_region_enabled
+        || !matches!(config.mouse_action, MouseAction::Click)
+        || click_position_non_intrusive_active_from_config(config)
+    {
         return None;
     }
 
@@ -1042,13 +1129,24 @@ fn next_click_position(
     config: &AutoClickerCommandConfig,
     next_click_position_index: &mut usize,
 ) -> Option<ClickPositionPoint> {
-    if config.click_positions.is_empty() {
+    let positions = &config.click_positions;
+
+    if positions.is_empty() {
         return None;
     }
 
-    let position = config.click_positions[*next_click_position_index % config.click_positions.len()];
-    *next_click_position_index = (*next_click_position_index + 1) % config.click_positions.len();
+    let position = positions[*next_click_position_index % positions.len()];
+    *next_click_position_index = (*next_click_position_index + 1) % positions.len();
     Some(position)
+}
+
+#[cfg(target_os = "windows")]
+fn non_intrusive_click_position(position: ClickPositionPoint) -> NonIntrusiveClickPosition {
+    NonIntrusiveClickPosition {
+        id: position.id,
+        x: position.x,
+        y: position.y,
+    }
 }
 
 #[cfg(target_os = "windows")]

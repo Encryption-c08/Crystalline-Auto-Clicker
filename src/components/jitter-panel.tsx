@@ -146,17 +146,15 @@ export function JitterPanel({
   const modeGroup = (
     <div
       className={cn(
-        "flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5 transition-colors",
-        isJitterAvailable
-          ? "border-border/70 bg-background/45"
-          : "border-border/60 bg-background/30 opacity-70"
+        "flex min-w-0 items-center gap-2",
+        !isJitterAvailable && "opacity-70"
       )}
     >
-      <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+      <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         Mode
       </span>
       <ToggleGroup
-        className="rounded-md border border-border bg-background/70"
+        className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
         onValueChange={(value) => {
           if (!value) {
             return
@@ -176,7 +174,7 @@ export function JitterPanel({
           <ToggleGroupItem
             key={value}
             aria-label={`Set jitter mode to ${jitterModeLabels[value]}`}
-            className="group/jitter-mode-item relative h-6 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground data-[state=on]:bg-background/90 data-[state=on]:text-foreground focus-visible:ring-0"
+            className="group/jitter-mode-item relative px-2.5 data-[state=on]:bg-muted-foreground/15 focus-visible:ring-0"
             disabled={!isJitterAvailable}
             value={value}
           >

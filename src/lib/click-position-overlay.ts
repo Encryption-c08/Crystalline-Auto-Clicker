@@ -67,6 +67,7 @@ export type ClickPositionOverlayState = {
   originX: number;
   originY: number;
   positions: ClickPosition[];
+  positionsInteractive: boolean;
   processPicker: ProcessPickerOverlayState;
   theme: OverlayVisualTheme;
   visible: boolean;
@@ -78,6 +79,7 @@ export type ClickPositionOverlayRequest = {
   edgeStop: EdgeStopOverlayConfig;
   editable: boolean;
   positions: ClickPosition[];
+  positionsInteractive: boolean;
   theme: OverlayVisualTheme;
   visible: boolean;
 };
@@ -93,6 +95,7 @@ const EMPTY_OVERLAY_STATE: ClickPositionOverlayState = {
   originX: 0,
   originY: 0,
   positions: [],
+  positionsInteractive: false,
   processPicker: {
     active: false,
     cursorX: 0,

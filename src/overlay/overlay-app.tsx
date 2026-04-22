@@ -71,6 +71,7 @@ function findNearbyDotId(
 }
 
 function ClickPositionDot({
+  allowPointerEvents,
   index,
   isAnimating,
   isDragging,
@@ -81,6 +82,7 @@ function ClickPositionDot({
   position,
   scaleFactor,
 }: {
+  allowPointerEvents: boolean;
   index: number;
   isAnimating: boolean;
   isDragging: boolean;
@@ -93,7 +95,10 @@ function ClickPositionDot({
 }) {
   return (
     <div
-      className="pointer-events-auto absolute"
+      className={cn(
+        "absolute",
+        allowPointerEvents ? "pointer-events-auto" : "pointer-events-none",
+      )}
       onPointerDown={(event) => onPointerDown(event, position.id)}
       style={{
         left: (position.x - originX) / scaleFactor,
@@ -339,6 +344,7 @@ export function UniversalOverlayApp() {
 
     const shouldBeInteractive =
       overlayState.visible &&
+      overlayState.positionsInteractive &&
       !processPickerActive &&
       !overlayState.editable &&
       overlayState.positions.length > 0 &&
@@ -363,6 +369,7 @@ export function UniversalOverlayApp() {
     draggingId,
     hoveredDotId,
     overlayState.editable,
+    overlayState.positionsInteractive,
     overlayState.positions.length,
     overlayState.visible,
     processPickerActive,
@@ -388,6 +395,7 @@ export function UniversalOverlayApp() {
     if (
       !isTauri() ||
       !overlayState.visible ||
+      !overlayState.positionsInteractive ||
       overlayState.editable ||
       processPickerActive ||
       overlayState.positions.length === 0
@@ -444,6 +452,7 @@ export function UniversalOverlayApp() {
     draggingId,
     hoveredDotId,
     overlayState.editable,
+    overlayState.positionsInteractive,
     overlayState.positions,
     overlayState.visible,
     processPickerActive,
@@ -511,7 +520,7 @@ export function UniversalOverlayApp() {
     event: ReactPointerEvent<HTMLDivElement>,
     id: number,
   ) {
-    if (overlayState.editable) {
+    if (overlayState.editable || !overlayState.positionsInteractive) {
       return;
     }
 
@@ -566,6 +575,9 @@ export function UniversalOverlayApp() {
       />
       {overlayState.positions.map((position, index) => (
         <ClickPositionDot
+          allowPointerEvents={
+            overlayState.positionsInteractive && !overlayState.editable
+          }
           index={index}
           isAnimating={animatingIds.includes(position.id)}
           isDragging={draggingId === position.id}
