@@ -1,11 +1,19 @@
-use std::{fs, io::ErrorKind, path::PathBuf, sync::Mutex, thread, time::Duration};
+use std::{
+    fs,
+    io::{Error, ErrorKind},
+    path::PathBuf,
+    sync::Mutex,
+    thread,
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    webview::PageLoadEvent, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Size,
-    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    webview::PageLoadEvent,
+    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Size, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
@@ -18,9 +26,9 @@ use windows_sys::Win32::{
     Media::{timeBeginPeriod, timeEndPeriod, TIMERR_NOERROR},
     UI::WindowsAndMessaging::{
         CallWindowProcW, DefWindowProcW, GetCursorPos, GetSystemMetrics, GetWindowLongPtrW,
-        SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, GWLP_WNDPROC, LWA_ALPHA,
-        SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN, WM_SYSCOMMAND, WS_EX_LAYERED,
+        SetLayeredWindowAttributes, SetWindowLongPtrW, GWLP_WNDPROC, GWL_EXSTYLE, LWA_ALPHA,
+        SC_KEYMENU, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+        WM_SYSCOMMAND, WS_EX_LAYERED,
     },
 };
 
@@ -43,9 +51,9 @@ use non_intrusive_clicks::{
 };
 use process_filters::{
     foreground_process_name as resolve_foreground_process_name,
-    list_open_app_processes as resolve_open_app_processes, OpenAppProcess,
+    list_open_app_processes as resolve_open_app_processes,
     list_running_process_names as resolve_running_process_names,
-    pick_process_name_from_click as resolve_pick_process_name_from_click,
+    pick_process_name_from_click as resolve_pick_process_name_from_click, OpenAppProcess,
 };
 
 struct AppState {
@@ -54,6 +62,7 @@ struct AppState {
     click_position_overlay_interactive: Mutex<bool>,
     click_position_overlay_loaded: Mutex<bool>,
     close_to_tray_enabled: Mutex<bool>,
+    latest_persisted_settings: Mutex<Option<PersistedAutoClickerSettings>>,
     main_window_hidden_to_tray: Mutex<bool>,
 }
 
@@ -204,7 +213,9 @@ fn normalize_window_opacity_percent(opacity: Option<f64>) -> f64 {
 }
 
 fn resolve_window_opacity_percent(settings: Option<&PersistedAutoClickerSettings>) -> f64 {
-    normalize_window_opacity_percent(settings.and_then(|saved_settings| saved_settings.window_opacity))
+    normalize_window_opacity_percent(
+        settings.and_then(|saved_settings| saved_settings.window_opacity),
+    )
 }
 
 fn load_saved_window_opacity_percent(app: &tauri::AppHandle) -> f64 {
@@ -356,6 +367,20 @@ fn settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("Unable to resolve settings folder: {error}"))
 }
 
+fn local_app_data_root_path() -> Result<PathBuf, String> {
+    dirs::data_local_dir()
+        .map(|path| path.join(SETTINGS_DIR_NAME))
+        .ok_or_else(|| "Unable to resolve local app data folder.".to_string())
+}
+
+fn webview_data_directory_path() -> Result<PathBuf, String> {
+    local_app_data_root_path().map(|path| path.join("EBWebView"))
+}
+
+fn log_directory_path() -> Result<PathBuf, String> {
+    local_app_data_root_path().map(|path| path.join("logs"))
+}
+
 fn legacy_settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
@@ -363,10 +388,45 @@ fn legacy_settings_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> 
         .map_err(|error| format!("Unable to resolve settings folder: {error}"))
 }
 
+fn find_window_config(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<tauri::utils::config::WindowConfig, String> {
+    app.config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == label)
+        .cloned()
+        .ok_or_else(|| format!("Window config '{label}' is not available."))
+}
+
+fn build_window_from_config_with_shared_data_directory(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<WebviewWindow, String> {
+    let config = find_window_config(app, label)?;
+    let data_directory = webview_data_directory_path()?;
+
+    WebviewWindowBuilder::from_config(app, &config)
+        .map_err(|error| format!("Unable to prepare {label} window: {error}"))?
+        .data_directory(data_directory)
+        .build()
+        .map_err(|error| format!("Unable to create {label} window: {error}"))
+}
+
 fn destroy_click_position_overlay_window(app: &tauri::AppHandle) {
     if let Some(overlay_window) = app.get_webview_window(CLICK_POSITION_OVERLAY_WINDOW_LABEL) {
         let _ = overlay_window.destroy();
     }
+}
+
+fn ensure_main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        return Ok(window);
+    }
+
+    build_window_from_config_with_shared_data_directory(app, "main")
 }
 
 fn main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
@@ -515,7 +575,9 @@ fn setup_main_tray_icon(app: &tauri::AppHandle) -> Result<(), String> {
         .tooltip("Crystalline Auto Clicker")
         .on_menu_event(|app, event| match event.id() {
             id if id == MAIN_TRAY_OPEN_ID => {
-                if let Err(error) = restore_main_window_from_tray_inner(app, app.state::<AppState>().inner()) {
+                if let Err(error) =
+                    restore_main_window_from_tray_inner(app, app.state::<AppState>().inner())
+                {
                     log::error!("unable to restore main window from tray: {error}");
                 }
             }
@@ -598,7 +660,10 @@ fn apply_window_opacity(hwnd: HWND, opacity_percent: f64) -> Result<(), String> 
 }
 
 #[cfg(target_os = "windows")]
-fn set_main_window_opacity_inner(window: &WebviewWindow, opacity_percent: f64) -> Result<(), String> {
+fn set_main_window_opacity_inner(
+    window: &WebviewWindow,
+    opacity_percent: f64,
+) -> Result<(), String> {
     let normalized_opacity = normalize_window_opacity_percent(Some(opacity_percent));
     let hwnd = window
         .hwnd()
@@ -640,25 +705,17 @@ fn ensure_click_position_overlay_window(
     }
 
     let bounds = virtual_screen_bounds();
-    let window = WebviewWindowBuilder::new(
+    let window = build_window_from_config_with_shared_data_directory(
         app,
         CLICK_POSITION_OVERLAY_WINDOW_LABEL,
-        WebviewUrl::App("overlay.html".into()),
-    )
-    .title("Crystalline Auto Clicker Overlay")
-    .decorations(false)
-    .transparent(true)
-    .resizable(false)
-    .visible(false)
-    .shadow(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .focusable(false)
-    .focused(false)
-    .position(bounds.x as f64, bounds.y as f64)
-    .inner_size(bounds.width as f64, bounds.height as f64)
-    .build()
-    .map_err(|error| format!("Unable to create click position overlay: {error}"))?;
+    )?;
+
+    window
+        .set_position(PhysicalPosition::new(bounds.x, bounds.y))
+        .map_err(|error| format!("Unable to position click position overlay: {error}"))?;
+    window
+        .set_size(PhysicalSize::new(bounds.width as u32, bounds.height as u32))
+        .map_err(|error| format!("Unable to size click position overlay: {error}"))?;
 
     configure_click_position_overlay_window(&window, &ClickPositionOverlayState::default(), false)?;
 
@@ -815,7 +872,9 @@ fn edge_stop_overlay_state(request: &EdgeStopOverlayRequest) -> EdgeStopOverlayS
     }
 }
 
-fn stored_click_position_overlay_state(state: &AppState) -> Result<ClickPositionOverlayState, String> {
+fn stored_click_position_overlay_state(
+    state: &AppState,
+) -> Result<ClickPositionOverlayState, String> {
     state
         .click_position_overlay
         .lock()
@@ -905,9 +964,7 @@ fn configure_auto_clicker(
 }
 
 #[tauri::command]
-fn get_auto_clicker_status(
-    state: tauri::State<'_, AppState>,
-) -> Result<AutoClickerStatus, String> {
+fn get_auto_clicker_status(state: tauri::State<'_, AppState>) -> Result<AutoClickerStatus, String> {
     Ok(state.auto_clicker.status())
 }
 
@@ -1103,6 +1160,68 @@ fn pick_click_position_non_intrusive_target_from_click(
     }
 }
 
+fn set_latest_persisted_settings(
+    state: &AppState,
+    settings: Option<PersistedAutoClickerSettings>,
+) -> Result<(), String> {
+    let mut latest_persisted_settings = state
+        .latest_persisted_settings
+        .lock()
+        .map_err(|_| "Failed to lock latest settings state".to_string())?;
+    *latest_persisted_settings = settings;
+    Ok(())
+}
+
+fn latest_persisted_settings(
+    state: &AppState,
+) -> Result<Option<PersistedAutoClickerSettings>, String> {
+    state
+        .latest_persisted_settings
+        .lock()
+        .map_err(|_| "Failed to lock latest settings state".to_string())
+        .map(|settings| settings.clone())
+}
+
+fn write_auto_clicker_settings_file(
+    app: &tauri::AppHandle,
+    settings: &PersistedAutoClickerSettings,
+) -> Result<(), String> {
+    let path = settings_file_path(app)?;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Unable to create settings folder: {error}"))?;
+    }
+
+    let contents = serde_json::to_string_pretty(settings)
+        .map_err(|error| format!("Unable to serialize settings: {error}"))?;
+
+    fs::write(&path, contents).map_err(|error| format!("Unable to write settings: {error}"))?;
+
+    Ok(())
+}
+
+fn apply_persisted_settings_side_effects(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    settings: &PersistedAutoClickerSettings,
+) -> Result<(), String> {
+    update_close_to_tray_enabled(state, settings.close_to_tray.unwrap_or(false))?;
+    sync_main_tray_icon_visibility(app, state)?;
+    Ok(())
+}
+
+fn flush_latest_persisted_settings(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
+    let Some(settings) = latest_persisted_settings(state)? else {
+        return Ok(());
+    };
+
+    write_auto_clicker_settings_file(app, &settings)?;
+    apply_persisted_settings_side_effects(app, state, &settings)?;
+
+    Ok(())
+}
+
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 fn pick_click_position_non_intrusive_target_from_click(
@@ -1141,20 +1260,21 @@ fn save_auto_clicker_settings(
     settings: PersistedAutoClickerSettings,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let path = settings_file_path(&app)?;
+    set_latest_persisted_settings(state.inner(), Some(settings.clone()))?;
+    write_auto_clicker_settings_file(&app, &settings)?;
+    apply_persisted_settings_side_effects(&app, state.inner(), &settings)?;
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Unable to create settings folder: {error}"))?;
-    }
+    Ok(())
+}
 
-    let contents = serde_json::to_string_pretty(&settings)
-        .map_err(|error| format!("Unable to serialize settings: {error}"))?;
-
-    fs::write(&path, contents).map_err(|error| format!("Unable to write settings: {error}"))?;
-
-    update_close_to_tray_enabled(state.inner(), settings.close_to_tray.unwrap_or(false))?;
-    sync_main_tray_icon_visibility(&app, state.inner())?;
+#[tauri::command]
+fn stage_auto_clicker_settings(
+    app: tauri::AppHandle,
+    settings: PersistedAutoClickerSettings,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    set_latest_persisted_settings(state.inner(), Some(settings.clone()))?;
+    apply_persisted_settings_side_effects(&app, state.inner(), &settings)?;
 
     Ok(())
 }
@@ -1207,10 +1327,13 @@ fn notify_webview_ready(
     if window.label() == "main" {
         #[cfg(target_os = "windows")]
         {
-            if let Err(error) =
-                set_main_window_opacity_inner(&window, load_saved_window_opacity_percent(&window.app_handle()))
-            {
-                log::warn!("unable to apply main window opacity when webview became ready: {error}");
+            if let Err(error) = set_main_window_opacity_inner(
+                &window,
+                load_saved_window_opacity_percent(&window.app_handle()),
+            ) {
+                log::warn!(
+                    "unable to apply main window opacity when webview became ready: {error}"
+                );
             }
         }
 
@@ -1277,11 +1400,13 @@ fn set_click_position_overlay_interactive(_interactive: bool) -> Result<(), Stri
 #[cfg(target_os = "windows")]
 #[tauri::command]
 fn read_pressed_keyboard_hotkey() -> Result<Option<HotkeyCaptureResponse>, String> {
-    Ok(auto_clicker::read_pressed_keyboard_hotkey()?.map(|hotkey| HotkeyCaptureResponse {
-        code: hotkey.code,
-        label: hotkey.label,
-        source: hotkey.source,
-    }))
+    Ok(
+        auto_clicker::read_pressed_keyboard_hotkey()?.map(|hotkey| HotkeyCaptureResponse {
+            code: hotkey.code,
+            label: hotkey.label,
+            source: hotkey.source,
+        }),
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1303,10 +1428,7 @@ fn read_global_hotkey_state(_code: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn sync_main_window_frame(
-    app: tauri::AppHandle,
-    frame: WindowFrameRequest,
-) -> Result<(), String> {
+fn sync_main_window_frame(app: tauri::AppHandle, frame: WindowFrameRequest) -> Result<(), String> {
     let WindowFrameRequest {
         animate,
         width,
@@ -1360,14 +1482,14 @@ fn sync_main_window_frame(
         for step in 1..=RESIZE_STEPS {
             let progress = step as f64 / RESIZE_STEPS as f64;
             let eased_progress = 1.0 - (1.0 - progress).powi(3);
-            let next_width =
-                (start_size.width + (target_size.width - start_size.width) * eased_progress)
-                    .round()
-                    .max(1.0);
-            let next_height =
-                (start_size.height + (target_size.height - start_size.height) * eased_progress)
-                    .round()
-                    .max(1.0);
+            let next_width = (start_size.width
+                + (target_size.width - start_size.width) * eased_progress)
+                .round()
+                .max(1.0);
+            let next_height = (start_size.height
+                + (target_size.height - start_size.height) * eased_progress)
+                .round()
+                .max(1.0);
 
             window
                 .set_size(LogicalSize::new(next_width, next_height))
@@ -1472,13 +1594,8 @@ fn install_main_window_proc(hwnd: isize) {
         return;
     }
 
-    let replaced_proc = unsafe {
-        SetWindowLongPtrW(
-            hwnd,
-            GWLP_WNDPROC,
-            main_window_proc as *const () as isize,
-        )
-    };
+    let replaced_proc =
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, main_window_proc as *const () as isize) };
     let previous_proc = if replaced_proc == 0 {
         original_proc
     } else {
@@ -1518,6 +1635,17 @@ fn external_navigation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let log_target = match log_directory_path() {
+        Ok(path) => TargetKind::Folder {
+            path,
+            file_name: None,
+        },
+        Err(error) => {
+            eprintln!("unable to resolve custom log directory, falling back to default: {error}");
+            TargetKind::LogDir { file_name: None }
+        }
+    };
+
     tauri::Builder::default()
         .manage(AppState {
             auto_clicker: AutoClickerController::new(),
@@ -1525,9 +1653,12 @@ pub fn run() {
             click_position_overlay_interactive: Mutex::new(false),
             click_position_overlay_loaded: Mutex::new(false),
             close_to_tray_enabled: Mutex::new(false),
+            latest_persisted_settings: Mutex::new(None),
             main_window_hidden_to_tray: Mutex::new(false),
         })
         .setup(|app| {
+            let _ = ensure_main_window(app.handle()).map_err(Error::other)?;
+
             let startup_settings = match load_auto_clicker_settings(app.handle().clone()) {
                 Ok(settings) => settings,
                 Err(error) => {
@@ -1535,6 +1666,12 @@ pub fn run() {
                     None
                 }
             };
+            if let Err(error) = set_latest_persisted_settings(
+                app.state::<AppState>().inner(),
+                startup_settings.clone(),
+            ) {
+                log::warn!("unable to initialize staged settings state: {error}");
+            }
 
             if let Err(error) = setup_main_tray_icon(&app.handle()) {
                 log::warn!("unable to initialize tray icon: {error}");
@@ -1582,7 +1719,7 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .targets([
                     Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::LogDir { file_name: None }),
+                    Target::new(log_target),
                     Target::new(TargetKind::Webview),
                 ])
                 .build(),
@@ -1610,6 +1747,7 @@ pub fn run() {
             sync_main_window_frame,
             set_main_window_opacity,
             set_main_window_always_on_top,
+            stage_auto_clicker_settings,
             hide_main_window_to_tray
         ])
         .on_window_event(|window, event| {
@@ -1630,7 +1768,8 @@ pub fn run() {
 
                     match window.is_minimized() {
                         Ok(true) => {
-                            if let Err(error) = hide_main_window_to_tray_inner(&app, state.inner()) {
+                            if let Err(error) = hide_main_window_to_tray_inner(&app, state.inner())
+                            {
                                 log::error!("unable to send main window to tray: {error}");
                             }
                         }
@@ -1642,6 +1781,12 @@ pub fn run() {
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
+                    let state = window.app_handle().state::<AppState>();
+                    if let Err(error) =
+                        flush_latest_persisted_settings(&window.app_handle(), state.inner())
+                    {
+                        log::warn!("unable to flush staged settings during close: {error}");
+                    }
                     destroy_click_position_overlay_window(&window.app_handle());
                     window.app_handle().exit(0);
                 }
@@ -1669,7 +1814,9 @@ pub fn run() {
                         &window,
                         load_saved_window_opacity_percent(&webview.app_handle()),
                     ) {
-                        log::warn!("unable to reapply main window opacity after page load: {error}");
+                        log::warn!(
+                            "unable to reapply main window opacity after page load: {error}"
+                        );
                     }
                 }
             }

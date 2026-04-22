@@ -7,9 +7,9 @@ use windows_sys::Win32::{
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         WindowsAndMessaging::{
-            EnumWindows, GA_ROOT, GetAncestor, GetClassNameW, GetClientRect, GetCursorPos,
-            GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-            WindowFromPoint,
+            EnumWindows, GetAncestor, GetClassNameW, GetClientRect, GetCursorPos,
+            GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, WindowFromPoint,
+            GA_ROOT,
         },
     },
 };
@@ -58,7 +58,11 @@ fn is_virtual_key_pressed(key_code: i32) -> bool {
 #[cfg(target_os = "windows")]
 fn root_window(window: HWND) -> HWND {
     let root = unsafe { GetAncestor(window, GA_ROOT) };
-    if root.is_null() { window } else { root }
+    if root.is_null() {
+        window
+    } else {
+        root
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -77,7 +81,11 @@ fn window_title(window: HWND) -> Option<String> {
 
     title_buffer.truncate(copied_length as usize);
     let title = String::from_utf16_lossy(&title_buffer).trim().to_string();
-    if title.is_empty() { None } else { Some(title) }
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -118,7 +126,9 @@ fn process_name_by_window(window: HWND) -> Result<Option<String>, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn target_window_from_root_window(window: HWND) -> Result<Option<NonIntrusiveTargetWindow>, String> {
+fn target_window_from_root_window(
+    window: HWND,
+) -> Result<Option<NonIntrusiveTargetWindow>, String> {
     let process_name = process_name_by_window(window)?
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -221,11 +231,9 @@ fn target_matches_window(window: HWND, target: &NonIntrusiveTargetWindow) -> Res
         return Ok(false);
     };
 
-    Ok(
-        current_target.process_name == target.process_name
-            && current_target.title == target.title
-            && current_target.class_name == target.class_name,
-    )
+    Ok(current_target.process_name == target.process_name
+        && current_target.title == target.title
+        && current_target.class_name == target.class_name)
 }
 
 #[cfg(target_os = "windows")]
@@ -318,7 +326,9 @@ pub(crate) fn pick_non_intrusive_target_from_click(
         }
 
         let hovered_target = hovered_target_window_at_point(cursor)?;
-        let hovered_title = hovered_target.as_ref().map(|window| window.target.title.as_str());
+        let hovered_title = hovered_target
+            .as_ref()
+            .map(|window| window.target.title.as_str());
 
         if cursor.x != last_cursor.x
             || cursor.y != last_cursor.y
@@ -335,7 +345,8 @@ pub(crate) fn pick_non_intrusive_target_from_click(
 
         if is_virtual_key_pressed(VK_LBUTTON as i32) {
             if let Some(hovered_target) = hovered_target {
-                let mapped_positions = map_positions_to_window_handle(hovered_target.hwnd, positions)?;
+                let mapped_positions =
+                    map_positions_to_window_handle(hovered_target.hwnd, positions)?;
 
                 return Ok(Some(PickNonIntrusiveTargetResult {
                     positions: mapped_positions,

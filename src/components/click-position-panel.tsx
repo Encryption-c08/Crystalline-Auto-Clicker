@@ -308,7 +308,7 @@ function ClickPositionControls({
       </span>
 
       <ToggleGroup
-        className="overflow-hidden rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
+        className="rounded-[min(var(--radius-md),10px)] border border-border bg-background/60"
         onValueChange={(value) => {
           if (!value) {
             return;

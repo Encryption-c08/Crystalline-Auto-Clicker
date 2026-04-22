@@ -22,3 +22,11 @@ export async function saveAutoClickerSettings(settings: AutoClickerSettings) {
 
   return trackedInvoke<void>("save_auto_clicker_settings", { settings })
 }
+
+export async function stageAutoClickerSettings(settings: AutoClickerSettings) {
+  if (!isTauri()) {
+    return
+  }
+
+  return trackedInvoke<void>("stage_auto_clicker_settings", { settings })
+}

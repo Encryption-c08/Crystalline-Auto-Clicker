@@ -206,7 +206,7 @@ if not "%EXIT_CODE%"=="0" (
 exit /b 0
 
 :copy_portable
-set "PORTABLE_SOURCE=%TARGET_DIR%\release\tauri-native.exe"
+set "PORTABLE_SOURCE=%TARGET_DIR%\release\Crystalline Auto Clicker.exe"
 set "PORTABLE_DEST=%BIN_DIR%\%PORTABLE_NAME%"
 
 if not exist "%PORTABLE_SOURCE%" (

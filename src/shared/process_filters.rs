@@ -47,8 +47,7 @@ pub(crate) fn normalize_process_name_list_with_suffix(
     let mut seen_values = HashSet::new();
 
     for value in values {
-        let Some(normalized_value) =
-            normalize_process_name_with_suffix(value, executable_suffix)
+        let Some(normalized_value) = normalize_process_name_with_suffix(value, executable_suffix)
         else {
             continue;
         };

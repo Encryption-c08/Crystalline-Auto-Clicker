@@ -5,9 +5,9 @@ use std::{
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
-    MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
-    INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT,
+    SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+    MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, PostMessageW, SetCursorPos, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
@@ -307,7 +307,9 @@ pub(crate) fn dispatch_mouse_clicks(
                         .unwrap_or(base_position)
                 });
             if edge_stop_matches_position(edge_stop, target_position) {
-                return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(target_position));
+                return Ok(DispatchMouseClicksOutcome::EdgeStopTriggered(
+                    target_position,
+                ));
             }
             should_click_on_restore =
                 cursor_jitter.is_some() && !click_positions_match(target_position, base_position);
@@ -338,7 +340,9 @@ pub(crate) fn dispatch_mouse_clicks(
         }
     }
 
-    Ok(DispatchMouseClicksOutcome::Completed(dispatched_click_count))
+    Ok(DispatchMouseClicksOutcome::Completed(
+        dispatched_click_count,
+    ))
 }
 
 pub(crate) fn dispatch_non_intrusive_mouse_clicks(
@@ -425,10 +429,7 @@ fn click_region_contains_position(region: OverlayRect, position: ClickPositionPo
     let right = region.x.saturating_add(region.width.max(0));
     let bottom = region.y.saturating_add(region.height.max(0));
 
-    position.x >= region.x
-        && position.x < right
-        && position.y >= region.y
-        && position.y < bottom
+    position.x >= region.x && position.x < right && position.y >= region.y && position.y < bottom
 }
 
 fn clamp_position_to_region(

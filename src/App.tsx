@@ -64,6 +64,7 @@ import {
 import {
   loadSavedAutoClickerSettings,
   saveAutoClickerSettings,
+  stageAutoClickerSettings,
 } from "@/lib/settings-store";
 import { setMainWindowOpacity } from "@/lib/window-opacity";
 import { matchesKeyboardEventHotkey } from "@/input/hotkeys";
@@ -637,6 +638,16 @@ export default function App() {
       }
     };
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!hasLoadedSettings) {
+      return;
+    }
+
+    void stageAutoClickerSettings(settings).catch((error) => {
+      console.error("Unable to stage settings", error);
+    });
+  }, [hasLoadedSettings, settings]);
 
   useEffect(() => {
     if (!hasLoadedSettings) {

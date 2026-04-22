@@ -1112,10 +1112,10 @@ export function SettingsPanelContent({
             <div
               aria-hidden={!isClickPositionContentVisible}
               className={cn(
-                "grid overflow-hidden transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
                 isClickPositionContentVisible
-                  ? "mt-3 grid-rows-[1fr] opacity-100"
-                  : "mt-0 grid-rows-[0fr] opacity-0",
+                  ? "mt-3 grid-rows-[1fr] overflow-visible opacity-100"
+                  : "mt-0 grid-rows-[0fr] overflow-hidden opacity-0",
               )}
               onTransitionEnd={(event) => {
                 if (
@@ -1129,7 +1129,14 @@ export function SettingsPanelContent({
                 setIsClickPositionContentMounted(false);
               }}
             >
-              <div className="min-h-0 overflow-hidden">
+              <div
+                className={cn(
+                  "min-h-0",
+                  isClickPositionContentVisible
+                    ? "overflow-visible"
+                    : "overflow-hidden",
+                )}
+              >
                 <div className="pb-1" id={clickPositionSectionId}>
                   <InlineClickPositionControls
                     onAddCenteredDot={clickPositionControls.onAddCenteredDot}

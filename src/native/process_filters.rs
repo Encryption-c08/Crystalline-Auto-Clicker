@@ -19,18 +19,16 @@ use windows_sys::Win32::{
             CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
             TH32CS_SNAPPROCESS,
         },
-        Threading::{
-            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-        },
+        Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION},
     },
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON},
         Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON},
         WindowsAndMessaging::{
-            DestroyIcon, DrawIconEx, EnumWindows, GetAncestor, GetCursorPos,
-            GetForegroundWindow, GetWindow, GetWindowLongW, GetWindowTextLengthW,
-            GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, WindowFromPoint,
-            DI_NORMAL, GA_ROOT, GW_OWNER, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+            DestroyIcon, DrawIconEx, EnumWindows, GetAncestor, GetCursorPos, GetForegroundWindow,
+            GetWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
+            GetWindowThreadProcessId, IsWindowVisible, WindowFromPoint, DI_NORMAL, GA_ROOT,
+            GWL_EXSTYLE, GW_OWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
         },
     },
 };
@@ -131,7 +129,11 @@ fn with_process_snapshot<T>(
 #[cfg(target_os = "windows")]
 fn root_window(window: HWND) -> HWND {
     let root = unsafe { GetAncestor(window, GA_ROOT) };
-    if root.is_null() { window } else { root }
+    if root.is_null() {
+        window
+    } else {
+        root
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -208,8 +210,7 @@ fn window_title_by_window(window: HWND) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn process_executable_path_by_id(process_id: u32) -> Result<Option<String>, String> {
-    let process_handle =
-        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
     if process_handle.is_null() {
         return Ok(None);
     }
@@ -287,7 +288,9 @@ fn icon_data_url_for_executable_path(executable_path: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn icon_data_url_from_hicon(icon_handle: windows_sys::Win32::UI::WindowsAndMessaging::HICON) -> Option<String> {
+fn icon_data_url_from_hicon(
+    icon_handle: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
+) -> Option<String> {
     let screen_dc = unsafe { GetDC(null_mut()) };
     if screen_dc.is_null() {
         return None;
@@ -397,7 +400,10 @@ fn open_app_process_by_window(window: HWND) -> Result<Option<OpenAppProcess>, St
         .as_deref()
         .and_then(icon_data_url_for_executable_path);
 
-    Ok(Some(OpenAppProcess { icon_data_url, name }))
+    Ok(Some(OpenAppProcess {
+        icon_data_url,
+        name,
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -456,7 +462,10 @@ fn hovered_open_app_at_point(point: POINT) -> Result<Option<HoveredOpenAppWindow
 
     let title = window_title_by_window(window).unwrap_or_else(|| process_name.clone());
 
-    Ok(Some(HoveredOpenAppWindow { process_name, title }))
+    Ok(Some(HoveredOpenAppWindow {
+        process_name,
+        title,
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -512,7 +521,9 @@ pub(crate) fn list_open_app_processes() -> Result<Vec<OpenAppProcess>, String> {
         return Err(error);
     }
 
-    state.processes.sort_by(|left, right| left.name.cmp(&right.name));
+    state
+        .processes
+        .sort_by(|left, right| left.name.cmp(&right.name));
     Ok(state.processes)
 }
 
