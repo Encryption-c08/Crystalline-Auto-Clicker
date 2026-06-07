@@ -2,7 +2,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge)](https://github.com/Encryption-c08/Crystalline-Auto-Clicker/releases)
 [![Linux](https://img.shields.io/badge/Linux-in%20development-F59E0B?style=for-the-badge)](https://github.com/Encryption-c08/Crystalline-Auto-Clicker/releases)
-[![Downloads](https://img.shields.io/github/downloads/Encryption-c08/Crystalline-Auto-Clicker/total?style=for-the-badge&label=downloads)](https://github.com/Encryption-c08/Crystalline-Auto-Clicker/releases)
+[![Downloads](https://img.shields.io/github/downloads/Encryption-c08/T7-Launcher-Public-Library/total?style=for-the-badge&label=downloads)](https://github.com/Encryption-c08/Crystalline-Auto-Clicker/releases)
 [![License](https://img.shields.io/github/license/Encryption-c08/Crystalline-Auto-Clicker?style=for-the-badge)](./LICENSE)
 [![Socials](https://img.shields.io/badge/Socials-Main%20Links-111111?style=for-the-badge)](https://fakecrime.bio/JohnFKennedy)
 
